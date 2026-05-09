@@ -12,7 +12,9 @@ where
 
 #[derive(Template)]
 #[template(path = "home.html")]
-pub struct HomeTemplate;
+pub struct HomeTemplate {
+    pub csrf_token: Option<String>,
+}
 
 #[derive(Template)]
 #[template(path = "register.html")]
@@ -21,6 +23,7 @@ pub struct RegisterTemplate {
     pub display_name: String,
     pub bio: String,
     pub error_message: Option<String>,
+    pub csrf_token: Option<String>,
 }
 
 #[derive(Template)]
@@ -28,6 +31,7 @@ pub struct RegisterTemplate {
 pub struct LoginTemplate {
     pub username: String,
     pub error_message: Option<String>,
+    pub csrf_token: Option<String>,
 }
 
 #[derive(Template)]
@@ -36,4 +40,5 @@ pub struct ErrorTemplate<'a> {
     pub status_code: u16,
     pub title: &'a str,
     pub message: &'a str,
+    pub csrf_token: Option<String>,
 }

@@ -1,0 +1,5 @@
+{% match csrf_token %}
+{% when Some with (token) %}
+<input type="hidden" name="csrf_token" value="{{ token }}">
+{% when None %}
+{% endmatch %}

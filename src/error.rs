@@ -66,6 +66,7 @@ impl IntoResponse for AppError {
             status_code: status.as_u16(),
             title: self.title(),
             message: self.user_message(),
+            csrf_token: None,
         };
 
         match template.render() {
