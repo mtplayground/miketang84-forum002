@@ -66,7 +66,17 @@
           <h3 class="text-lg font-semibold text-slate-900">{{ post.author_username }}</h3>
           {% match post.edit_url %}
           {% when Some with (url) %}
-          <a class="text-sm font-medium text-accent hover:underline" href="{{ url }}">Edit post</a>
+          <div class="flex items-center gap-4 text-sm">
+            <a class="font-medium text-accent hover:underline" href="{{ url }}">Edit post</a>
+            {% match post.delete_action %}
+            {% when Some with (action) %}
+            <form action="{{ action }}" method="post">
+              {% include "_csrf_input.html" %}
+              <button class="font-medium text-rose-700 hover:underline" type="submit">Delete post</button>
+            </form>
+            {% when None %}
+            {% endmatch %}
+          </div>
           {% when None %}
           {% endmatch %}
         </div>
@@ -75,7 +85,11 @@
           <p>Updated: {{ post.updated_at }}</p>
         </div>
       </div>
+      {% if post.is_deleted %}
+      <div class="mt-5 italic leading-7 text-slate-400">[deleted]</div>
+      {% else %}
       <div class="mt-5 whitespace-pre-wrap leading-7 text-slate-700">{{ post.body }}</div>
+      {% endif %}
     </article>
     {% endfor %}
   </div>
