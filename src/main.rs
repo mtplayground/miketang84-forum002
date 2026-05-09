@@ -145,27 +145,55 @@ async fn main() -> Result<(), AppError> {
 
     let config = Config::from_env()?;
     let bind_addr = config.bind_addr;
+    let session_secret_configured = !config.session_secret.is_empty();
     let db = Db::connect(&config).await?;
     db.run_migrations().await?;
+    let state = build_state(bind_addr, db, config.edit_window_minutes, config.session_secret);
+    let app = app_router(state);
+
+    let listener = TcpListener::bind(bind_addr).await?;
+    info!("listening on {}", bind_addr);
+    info!(
+        edit_window_minutes = config.edit_window_minutes,
+        database_configured = !config.database_url.is_empty(),
+        session_secret_configured,
+        "configuration loaded"
+    );
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    Ok(())
+}
+
+fn build_state(
+    bind_addr: std::net::SocketAddr,
+    db: Db,
+    edit_window_minutes: u64,
+    session_secret: String,
+) -> AppState {
     let categories = CategoryStore::new(db.pool());
     let profiles = ProfileStore::new(db.pool());
     let search = SearchStore::new(db.pool());
     let sessions = SessionStore::new(db.pool());
     let threads = ThreadStore::new(db.pool());
 
-    let state = AppState {
+    AppState {
         bind_addr,
         db,
         categories,
-        edit_window_minutes: config.edit_window_minutes,
+        edit_window_minutes,
         profiles,
         search,
         sessions,
-        session_secret: config.session_secret.clone(),
+        session_secret,
         threads,
-    };
+    }
+}
 
-    let app = Router::new()
+fn app_router(state: AppState) -> Router {
+    Router::new()
         .route("/", get(root))
         .route("/c/:slug", get(category_page))
         .route("/c/:slug/t/:thread_key", get(legacy_thread_page))
@@ -210,22 +238,7 @@ async fn main() -> Result<(), AppError> {
                 .on_response(DefaultOnResponse::new().level(Level::INFO))
                 .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
         )
-        .with_state(state);
-
-    let listener = TcpListener::bind(bind_addr).await?;
-    info!("listening on {}", bind_addr);
-    info!(
-        edit_window_minutes = config.edit_window_minutes,
-        database_configured = !config.database_url.is_empty(),
-        session_secret_configured = !config.session_secret.is_empty(),
-        "configuration loaded"
-    );
-
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
-
-    Ok(())
+        .with_state(state)
 }
 
 async fn register_form(csrf_token: CsrfToken) -> Result<impl IntoResponse, AppError> {
@@ -1752,5 +1765,276 @@ fn role_as_str(role: Role) -> &'static str {
         Role::User => "user",
         Role::Moderator => "moderator",
         Role::Admin => "admin",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{app_router, auth, build_state};
+    use axum::{
+        body::{to_bytes, Body},
+        http::{header, Request, StatusCode},
+    };
+    use sqlx::PgPool;
+    use std::net::SocketAddr;
+    use tower::ServiceExt;
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    #[ignore = "requires a direct PostgreSQL test database; the Fly proxy endpoint cannot provision sqlx::test databases"]
+    async fn register_login_logout_and_protected_route_access(pool: PgPool) {
+        let app = test_app(pool.clone());
+
+        let (register_cookie, register_csrf) = fetch_csrf(&app, "/register", None).await;
+        let register_response = post_form(
+            &app,
+            "/register",
+            Some(&register_cookie),
+            &[
+                ("username", "alice"),
+                ("display_name", "Alice"),
+                ("bio", "testing"),
+                ("password", "password123"),
+                (auth::CSRF_FORM_FIELD, &register_csrf),
+            ],
+        )
+        .await;
+        assert_eq!(register_response.status(), StatusCode::SEE_OTHER);
+
+        let auth_cookie = response_cookie(&register_response).expect("register should issue auth cookie");
+        let protected_response = get(&app, "/me/profile", Some(&auth_cookie)).await;
+        assert_eq!(protected_response.status(), StatusCode::OK);
+
+        let (_logout_cookie, logout_csrf) = fetch_csrf(&app, "/me/profile", Some(&auth_cookie)).await;
+        let logout_response = post_form(
+            &app,
+            "/logout",
+            Some(&auth_cookie),
+            &[(auth::CSRF_FORM_FIELD, &logout_csrf)],
+        )
+        .await;
+        assert_eq!(logout_response.status(), StatusCode::SEE_OTHER);
+
+        let post_logout_response = get(&app, "/me/profile", Some(&auth_cookie)).await;
+        assert_eq!(post_logout_response.status(), StatusCode::FOUND);
+        assert_eq!(
+            post_logout_response
+                .headers()
+                .get(header::LOCATION)
+                .expect("redirect location should be present"),
+            "/login"
+        );
+
+        let (login_cookie, login_csrf) = fetch_csrf(&app, "/login", None).await;
+        let login_response = post_form(
+            &app,
+            "/login",
+            Some(&login_cookie),
+            &[
+                ("username", "alice"),
+                ("password", "password123"),
+                (auth::CSRF_FORM_FIELD, &login_csrf),
+            ],
+        )
+        .await;
+        assert_eq!(login_response.status(), StatusCode::SEE_OTHER);
+
+        let relogin_cookie = response_cookie(&login_response).expect("login should issue auth cookie");
+        let relogin_protected_response = get(&app, "/me/profile", Some(&relogin_cookie)).await;
+        assert_eq!(relogin_protected_response.status(), StatusCode::OK);
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    #[ignore = "requires a direct PostgreSQL test database; the Fly proxy endpoint cannot provision sqlx::test databases"]
+    async fn duplicate_username_registration_is_rejected(pool: PgPool) {
+        let app = test_app(pool);
+
+        let (first_cookie, first_csrf) = fetch_csrf(&app, "/register", None).await;
+        let first_response = post_form(
+            &app,
+            "/register",
+            Some(&first_cookie),
+            &[
+                ("username", "duplicate"),
+                ("display_name", "Duplicate"),
+                ("bio", ""),
+                ("password", "password123"),
+                (auth::CSRF_FORM_FIELD, &first_csrf),
+            ],
+        )
+        .await;
+        assert_eq!(first_response.status(), StatusCode::SEE_OTHER);
+
+        let (second_cookie, second_csrf) = fetch_csrf(&app, "/register", None).await;
+        let second_response = post_form(
+            &app,
+            "/register",
+            Some(&second_cookie),
+            &[
+                ("username", "duplicate"),
+                ("display_name", "Duplicate Again"),
+                ("bio", ""),
+                ("password", "password123"),
+                (auth::CSRF_FORM_FIELD, &second_csrf),
+            ],
+        )
+        .await;
+        assert_eq!(second_response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let body = response_text(second_response).await;
+        assert!(body.contains("That username is already taken."));
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    #[ignore = "requires a direct PostgreSQL test database; the Fly proxy endpoint cannot provision sqlx::test databases"]
+    async fn wrong_password_and_expired_session_are_rejected(pool: PgPool) {
+        let app = test_app(pool.clone());
+
+        let (register_cookie, register_csrf) = fetch_csrf(&app, "/register", None).await;
+        let register_response = post_form(
+            &app,
+            "/register",
+            Some(&register_cookie),
+            &[
+                ("username", "bob"),
+                ("display_name", "Bob"),
+                ("bio", ""),
+                ("password", "password123"),
+                (auth::CSRF_FORM_FIELD, &register_csrf),
+            ],
+        )
+        .await;
+        assert_eq!(register_response.status(), StatusCode::SEE_OTHER);
+
+        let auth_cookie = response_cookie(&register_response).expect("register should issue auth cookie");
+
+        let (login_cookie, login_csrf) = fetch_csrf(&app, "/login", None).await;
+        let wrong_password_response = post_form(
+            &app,
+            "/login",
+            Some(&login_cookie),
+            &[
+                ("username", "bob"),
+                ("password", "not-the-password"),
+                (auth::CSRF_FORM_FIELD, &login_csrf),
+            ],
+        )
+        .await;
+        assert_eq!(wrong_password_response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = response_text(wrong_password_response).await;
+        assert!(body.contains("Invalid username or password."));
+
+        let user_id = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT id
+            FROM users
+            WHERE username = 'bob'
+            "#,
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("user should exist");
+
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET expires_at = NOW() - INTERVAL '1 day'
+            WHERE user_id = $1
+            "#,
+        )
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("session expiration update should succeed");
+
+        let expired_session_response = get(&app, "/me/profile", Some(&auth_cookie)).await;
+        assert_eq!(expired_session_response.status(), StatusCode::FOUND);
+        assert_eq!(
+            expired_session_response
+                .headers()
+                .get(header::LOCATION)
+                .expect("redirect location should be present"),
+            "/login"
+        );
+    }
+
+    fn test_app(pool: PgPool) -> axum::Router {
+        let db = crate::db::Db::from_pool(pool);
+        let state = build_state(
+            SocketAddr::from(([127, 0, 0, 1], 3000)),
+            db,
+            15,
+            "integration-test-session-secret-1234567890".to_string(),
+        );
+
+        app_router(state)
+    }
+
+    async fn fetch_csrf(
+        app: &axum::Router,
+        path: &str,
+        cookie: Option<&str>,
+    ) -> (String, String) {
+        let response = get(app, path, cookie).await;
+        let response_cookie = response_cookie(&response).unwrap_or_else(|| cookie.unwrap_or_default().to_string());
+        let body = response_text(response).await;
+        let csrf_token = extract_csrf_token(&body).expect("csrf token should be present");
+
+        (response_cookie, csrf_token)
+    }
+
+    async fn get(app: &axum::Router, path: &str, cookie: Option<&str>) -> axum::response::Response {
+        let mut builder = Request::builder().method("GET").uri(path);
+        if let Some(cookie) = cookie {
+            builder = builder.header(header::COOKIE, cookie);
+        }
+
+        app.clone()
+            .oneshot(builder.body(Body::empty()).expect("request should build"))
+            .await
+            .expect("request should succeed")
+    }
+
+    async fn post_form(
+        app: &axum::Router,
+        path: &str,
+        cookie: Option<&str>,
+        fields: &[(&str, &str)],
+    ) -> axum::response::Response {
+        let encoded = serde_urlencoded::to_string(fields).expect("form should encode");
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri(path)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+
+        if let Some(cookie) = cookie {
+            builder = builder.header(header::COOKIE, cookie);
+        }
+
+        app.clone()
+            .oneshot(builder.body(Body::from(encoded)).expect("request should build"))
+            .await
+            .expect("request should succeed")
+    }
+
+    fn response_cookie(response: &axum::response::Response) -> Option<String> {
+        response
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|cookie| cookie.split(';').next().map(str::to_string))
+    }
+
+    async fn response_text(response: axum::response::Response) -> String {
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        String::from_utf8(bytes.to_vec()).expect("response body should be utf-8")
+    }
+
+    fn extract_csrf_token(body: &str) -> Option<String> {
+        let marker = "name=\"csrf_token\" value=\"";
+        let start = body.find(marker)? + marker.len();
+        let end = body[start..].find('"')? + start;
+        Some(body[start..end].to_string())
     }
 }

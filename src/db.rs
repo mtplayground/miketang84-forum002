@@ -3,7 +3,7 @@ use tracing::info;
 
 use crate::config::Config;
 
-static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+pub(crate) static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Clone)]
 pub struct Db {
@@ -29,5 +29,10 @@ impl Db {
 
     pub fn pool(&self) -> &PgPool {
         &self.pool
+    }
+
+    #[cfg(test)]
+    pub fn from_pool(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
