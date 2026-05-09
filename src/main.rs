@@ -44,9 +44,9 @@ use session_store::SessionStore;
 use templates::{
     render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, CategoryHeader,
     CategoryTemplate, CategoryThreadRow, EditPostContext, EditPostFormValues, EditPostTemplate,
-    HomeCategoryCard, HomeTemplate, LoginTemplate, NewThreadFormValues, NewThreadTemplate,
-    ProfileHeader, ProfilePostRow, ProfileTemplate, RegisterTemplate, ThreadHeader, ThreadPostRow,
-    ThreadTemplate,
+    EditProfileContext, EditProfileFormValues, EditProfileTemplate, HomeCategoryCard,
+    HomeTemplate, LoginTemplate, NewThreadFormValues, NewThreadTemplate, ProfileHeader,
+    ProfilePostRow, ProfileTemplate, RegisterTemplate, ThreadHeader, ThreadPostRow, ThreadTemplate,
 };
 use thread_store::{CreateThreadInput, ThreadStore};
 
@@ -118,6 +118,12 @@ struct EditPostForm {
     body: String,
 }
 
+#[derive(Debug, Default, Clone, Deserialize)]
+struct EditProfileForm {
+    display_name: String,
+    bio: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     init_tracing();
@@ -151,6 +157,7 @@ async fn main() -> Result<(), AppError> {
         .route("/p/:id/edit", get(edit_post_form).post(update_post))
         .route("/t/:id/reply", post(reply_to_thread))
         .route("/t/:thread_key", get(thread_page))
+        .route("/me/profile", get(edit_profile_form).post(update_profile))
         .route("/u/:username", get(public_profile))
         .route("/admin/categories", get(admin_categories))
         .route("/admin/categories/create", post(create_category))
@@ -676,7 +683,7 @@ async fn delete_post(
 async fn public_profile(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    _maybe_user: MaybeUser,
+    maybe_user: MaybeUser,
     csrf_token: CsrfToken,
 ) -> Result<Response, AppError> {
     let username = username.trim().to_lowercase();
@@ -684,6 +691,11 @@ async fn public_profile(
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
     let recent_posts = state.profiles.recent_posts(profile.id, 10).await?;
+    let can_edit = maybe_user
+        .0
+        .as_ref()
+        .map(|current_user| current_user.user.id == profile.id)
+        .unwrap_or(false);
     let html = render(ProfileTemplate {
         profile: ProfileHeader {
             username: profile.username,
@@ -693,10 +705,69 @@ async fn public_profile(
             post_count: profile.post_count,
         },
         recent_posts: recent_posts.into_iter().map(profile_post_row).collect(),
+        can_edit,
+        edit_profile_url: "/me/profile".to_string(),
         csrf_token: csrf_token.0,
     })?;
 
     Ok(html.into_response())
+}
+
+async fn edit_profile_form(
+    State(state): State<AppState>,
+    user: RequireUser,
+    csrf_token: CsrfToken,
+) -> Result<Response, AppError> {
+    let Some(profile) = state.profiles.get_editable_profile(user.0.user.id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    render_edit_profile(
+        &profile,
+        EditProfileFormValues {
+            display_name: profile.display_name.clone(),
+            bio: profile.bio.clone(),
+        },
+        None,
+        csrf_token.0,
+        StatusCode::OK,
+    )
+}
+
+async fn update_profile(
+    State(state): State<AppState>,
+    user: RequireUser,
+    csrf_token: CsrfToken,
+    Form(form): Form<EditProfileForm>,
+) -> Result<Response, AppError> {
+    let Some(profile) = state.profiles.get_editable_profile(user.0.user.id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    let normalized_form = normalize_edit_profile_form(form);
+    if let Err(message) = validate_edit_profile_form(&normalized_form) {
+        return render_edit_profile(
+            &profile,
+            edit_profile_form_values(&normalized_form),
+            Some(message),
+            csrf_token.0,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        );
+    }
+
+    if !state
+        .profiles
+        .update_profile(
+            user.0.user.id,
+            &normalized_form.display_name,
+            &normalized_form.bio,
+        )
+        .await?
+    {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+
+    Ok(Redirect::to(&format!("/u/{}", profile.username)).into_response())
 }
 
 async fn admin_categories(
@@ -1008,6 +1079,13 @@ fn normalize_new_thread_form(form: NewThreadForm) -> NewThreadForm {
     }
 }
 
+fn normalize_edit_profile_form(form: EditProfileForm) -> EditProfileForm {
+    EditProfileForm {
+        display_name: form.display_name.trim().to_string(),
+        bio: form.bio.trim().to_string(),
+    }
+}
+
 fn validate_new_thread_form(form: &NewThreadForm) -> Result<(), String> {
     if !(3..=120).contains(&form.title.len()) {
         return Err("Thread title must be between 3 and 120 characters.".to_string());
@@ -1015,6 +1093,29 @@ fn validate_new_thread_form(form: &NewThreadForm) -> Result<(), String> {
 
     if form.body.is_empty() {
         return Err("The first post body is required.".to_string());
+    }
+
+    Ok(())
+}
+
+fn edit_profile_form_values(form: &EditProfileForm) -> EditProfileFormValues {
+    EditProfileFormValues {
+        display_name: form.display_name.clone(),
+        bio: form.bio.clone(),
+    }
+}
+
+fn validate_edit_profile_form(form: &EditProfileForm) -> Result<(), String> {
+    if form.display_name.is_empty() {
+        return Err("Display name is required.".to_string());
+    }
+
+    if form.display_name.len() > 64 {
+        return Err("Display name must be 64 characters or fewer.".to_string());
+    }
+
+    if form.bio.len() > 280 {
+        return Err("Bio must be 280 characters or fewer.".to_string());
     }
 
     Ok(())
@@ -1089,6 +1190,25 @@ fn render_edit_post(
             author_username: post.author_username.clone(),
             created_at: post.created_at,
             updated_at: post.updated_at,
+        },
+        form,
+        error_message,
+        csrf_token,
+    })?;
+
+    Ok((status, html).into_response())
+}
+
+fn render_edit_profile(
+    profile: &profile_store::EditableProfile,
+    form: EditProfileFormValues,
+    error_message: Option<String>,
+    csrf_token: Option<String>,
+    status: StatusCode,
+) -> Result<Response, AppError> {
+    let html = render(EditProfileTemplate {
+        profile: EditProfileContext {
+            username: profile.username.clone(),
         },
         form,
         error_message,

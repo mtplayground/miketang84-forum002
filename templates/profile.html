@@ -21,6 +21,13 @@
       <p class="text-sm font-medium uppercase tracking-[0.2em] text-slate-500">@{{ profile.username }}</p>
     </div>
     <p class="max-w-3xl text-lg leading-8 text-slate-600">{{ profile.bio }}</p>
+    {% if can_edit %}
+    <div>
+      <a class="inline-flex rounded-full border border-border px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-accent hover:text-accent" href="{{ edit_profile_url }}">
+        Edit profile
+      </a>
+    </div>
+    {% endif %}
     <div class="flex flex-wrap items-center gap-6 text-sm text-slate-500">
       <span>Joined {{ profile.created_at }}</span>
       <span>{{ profile.post_count }} post{% if profile.post_count != 1 %}s{% endif %}</span>

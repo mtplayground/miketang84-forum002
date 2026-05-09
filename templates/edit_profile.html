@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Profile | miketang84-forum002{% endblock %}
+
+{% block flash_messages %}
+{% match error_message %}
+{% when Some with (message) %}
+<div class="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+  {{ message }}
+</div>
+{% when None %}
+<div class="rounded-2xl border border-dashed border-border bg-white/70 px-4 py-3 text-sm text-slate-600">
+  Update your public display name and bio.
+</div>
+{% endmatch %}
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+  <div class="space-y-3">
+    <div class="flex items-center gap-3 text-sm text-slate-500">
+      <a class="font-medium text-accent hover:underline" href="/">Forum index</a>
+      <span>/</span>
+      <a class="font-medium text-accent hover:underline" href="/u/{{ profile.username }}">@{{ profile.username }}</a>
+      <span>/</span>
+      <span>Edit profile</span>
+    </div>
+    <h2 class="text-4xl font-semibold tracking-tight text-slate-900">Edit profile</h2>
+    <p class="text-sm text-slate-500">Changes update your public profile immediately.</p>
+  </div>
+
+  <form class="grid gap-6" action="/me/profile" method="post">
+    {% include "_csrf_input.html" %}
+    <label class="grid gap-2">
+      <span class="text-sm font-medium text-slate-700">Display name</span>
+      <input
+        class="rounded-full border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+        maxlength="64"
+        name="display_name"
+        required
+        type="text"
+        value="{{ form.display_name }}">
+    </label>
+
+    <label class="grid gap-2">
+      <span class="text-sm font-medium text-slate-700">Bio</span>
+      <textarea
+        class="min-h-40 rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+        maxlength="280"
+        name="bio">{{ form.bio }}</textarea>
+    </label>
+
+    <div class="flex items-center justify-between gap-4">
+      <a class="text-sm font-medium text-accent hover:underline" href="/u/{{ profile.username }}">Back to profile</a>
+      <button
+        class="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-teal-700"
+        type="submit">
+        Save profile
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}
