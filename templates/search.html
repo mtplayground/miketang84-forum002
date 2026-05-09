@@ -10,15 +10,15 @@
 
 {% block content %}
 <div class="space-y-10">
-  <div class="space-y-3">
-    <div class="flex items-center gap-3 text-sm text-slate-500">
-      <a class="font-medium text-accent hover:underline" href="/">Forum index</a>
-      <span>/</span>
-      <span>Search</span>
-    </div>
-    <h2 class="text-4xl font-semibold tracking-tight text-slate-900">Search results</h2>
+    <div class="space-y-3">
+      <div class="flex items-center gap-3 text-sm text-slate-500">
+        <a class="font-medium text-accent hover:underline" href="/">Forum index</a>
+        <span>/</span>
+        <span>Search</span>
+      </div>
+      <h2 class="text-4xl font-semibold tracking-tight text-slate-900">Search results</h2>
     {% if query.is_empty() %}
-    <p class="max-w-3xl text-lg leading-8 text-slate-600">Enter a search query in the URL using <code>?q=...</code> to look across threads and posts.</p>
+    <p class="max-w-3xl text-lg leading-8 text-slate-600">Use the search box in the navigation bar to look across thread titles and post bodies.</p>
     {% else %}
     <p class="max-w-3xl text-lg leading-8 text-slate-600">
       Showing {{ total_results }} result{% if total_results != 1 %}s{% endif %} for <span class="font-semibold text-slate-900">"{{ query }}"</span>.
