@@ -4,6 +4,29 @@ use chrono::{DateTime, Utc};
 
 use crate::error::AppError;
 
+pub mod filters {
+    pub fn format_body(value: &str) -> askama::Result<String> {
+        Ok(escape_html(value).replace('\n', "<br>"))
+    }
+
+    fn escape_html(value: &str) -> String {
+        let mut escaped = String::with_capacity(value.len());
+
+        for ch in value.chars() {
+            match ch {
+                '&' => escaped.push_str("&amp;"),
+                '<' => escaped.push_str("&lt;"),
+                '>' => escaped.push_str("&gt;"),
+                '"' => escaped.push_str("&quot;"),
+                '\'' => escaped.push_str("&#x27;"),
+                _ => escaped.push(ch),
+            }
+        }
+
+        escaped
+    }
+}
+
 pub fn render<T>(template: T) -> Result<Html<String>, AppError>
 where
     T: Template,
@@ -200,4 +223,27 @@ pub struct ErrorTemplate<'a> {
     pub title: &'a str,
     pub message: &'a str,
     pub csrf_token: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::filters::format_body;
+
+    #[test]
+    fn format_body_escapes_html() {
+        let formatted = format_body(r#"<script>alert("x")</script>"#).expect("formatting should succeed");
+
+        assert_eq!(
+            formatted,
+            "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;"
+        );
+    }
+
+    #[test]
+    fn format_body_preserves_line_breaks() {
+        let formatted = format_body("first line\nsecond line\nthird line")
+            .expect("formatting should succeed");
+
+        assert_eq!(formatted, "first line<br>second line<br>third line");
+    }
 }
