@@ -17,6 +17,7 @@ use tracing::{error, info, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod auth;
+mod category_store;
 mod config;
 mod db;
 mod error;
