@@ -29,18 +29,21 @@ mod templates;
 use auth::{
     build_session_cookie, clear_session_cookie, signed_session_id_from_headers, CsrfToken, MaybeUser,
 };
+use category_store::CategoryStore;
 use config::Config;
 use db::Db;
 use error::AppError;
+use models::category::Category;
 use models::user::User;
 use password::{hash_password, verify_password};
 use session_store::SessionStore;
-use templates::{render, HomeTemplate, LoginTemplate, RegisterTemplate};
+use templates::{render, HomeCategoryCard, HomeTemplate, LoginTemplate, RegisterTemplate};
 
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) bind_addr: std::net::SocketAddr,
     pub(crate) db: Db,
+    pub(crate) categories: CategoryStore,
     pub(crate) sessions: SessionStore,
     pub(crate) session_secret: String,
 }
@@ -74,11 +77,13 @@ async fn main() -> Result<(), AppError> {
     let bind_addr = config.bind_addr;
     let db = Db::connect(&config).await?;
     db.run_migrations().await?;
+    let categories = CategoryStore::new(db.pool());
     let sessions = SessionStore::new(db.pool());
 
     let state = AppState {
         bind_addr,
         db,
+        categories,
         sessions,
         session_secret: config.session_secret.clone(),
     };
@@ -293,8 +298,21 @@ async fn logout(State(state): State<AppState>, headers: axum::http::HeaderMap) -
     Ok(([(SET_COOKIE, cookie_value)], Redirect::to("/")).into_response())
 }
 
-async fn root(_maybe_user: MaybeUser, csrf_token: CsrfToken) -> Result<impl IntoResponse, AppError> {
+async fn root(
+    State(state): State<AppState>,
+    _maybe_user: MaybeUser,
+    csrf_token: CsrfToken,
+) -> Result<impl IntoResponse, AppError> {
+    let categories = state
+        .categories
+        .list()
+        .await?
+        .into_iter()
+        .map(home_category_card)
+        .collect();
+
     render(HomeTemplate {
+        categories,
         csrf_token: csrf_token.0,
     })
 }
@@ -392,5 +410,16 @@ fn validate_registration_form(form: &RegistrationForm, password: &str) -> Result
 async fn shutdown_signal() {
     if let Err(err) = tokio::signal::ctrl_c().await {
         error!("failed to install shutdown signal handler: {}", err);
+    }
+}
+
+fn home_category_card(category: Category) -> HomeCategoryCard {
+    HomeCategoryCard {
+        name: category.name,
+        slug: category.slug,
+        description: category.description,
+        position: category.position,
+        thread_count: 0,
+        most_recent_thread: None,
     }
 }

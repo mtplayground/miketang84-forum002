@@ -2,12 +2,63 @@
 
 {% block title %}Home | miketang84-forum002{% endblock %}
 
+{% block flash_messages %}
+<div class="rounded-2xl border border-dashed border-border bg-white/70 px-4 py-3 text-sm text-slate-600">
+  Browse categories below. Thread counts and recent-thread summaries will populate once thread support lands.
+</div>
+{% endblock %}
+
 {% block content %}
-<div class="space-y-4">
-  <p class="text-sm font-semibold uppercase tracking-[0.3em] text-accent">Forum scaffold</p>
-  <h2 class="max-w-2xl text-4xl font-semibold tracking-tight text-slate-900">A server-rendered Rust forum with a static Tailwind asset pipeline.</h2>
-  <p class="max-w-2xl text-lg leading-8 text-slate-600">
-    This home page now renders through Askama and loads styles from <code>/static/css/app.css</code>.
-  </p>
+<div class="space-y-10">
+  <div class="space-y-3">
+    <p class="text-sm font-semibold uppercase tracking-[0.3em] text-accent">Forum index</p>
+    <h2 class="max-w-3xl text-4xl font-semibold tracking-tight text-slate-900">All categories, ordered for the front page.</h2>
+    <p class="max-w-3xl text-lg leading-8 text-slate-600">
+      Categories are loaded from PostgreSQL and rendered server-side. Thread metrics are shown as placeholders until thread data exists.
+    </p>
+  </div>
+
+  {% if categories.is_empty() %}
+  <div class="rounded-[1.75rem] border border-dashed border-border bg-slate-50 px-6 py-8 text-slate-600">
+    No categories have been created yet.
+  </div>
+  {% else %}
+  <div class="grid gap-6">
+    {% for category in categories %}
+    <article class="rounded-[1.75rem] border border-border bg-slate-50/80 p-6 shadow-sm transition hover:border-accent/40 hover:bg-white">
+      <div class="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
+        <div class="space-y-3">
+          <div class="flex items-center gap-3 text-sm text-slate-500">
+            <span class="rounded-full bg-accentSoft px-3 py-1 font-medium text-accent">#{{ category.position }}</span>
+            <span>/{{ category.slug }}</span>
+          </div>
+          <h3 class="text-2xl font-semibold tracking-tight text-slate-900">{{ category.name }}</h3>
+          <p class="max-w-2xl leading-7 text-slate-600">{{ category.description }}</p>
+        </div>
+
+        <div class="grid min-w-64 gap-3 rounded-3xl border border-border bg-white p-5 text-sm text-slate-600">
+          <div class="flex items-baseline justify-between gap-4">
+            <span class="font-medium text-slate-700">Threads</span>
+            <span class="text-2xl font-semibold text-slate-900">{{ category.thread_count }}</span>
+          </div>
+          {% match category.most_recent_thread %}
+          {% when Some with (thread) %}
+          <div class="space-y-1">
+            <p class="font-medium text-slate-700">Most recent thread</p>
+            <p class="text-slate-900">{{ thread.title }}</p>
+            <p class="text-xs uppercase tracking-[0.2em] text-slate-400">{{ thread.created_at }}</p>
+          </div>
+          {% when None %}
+          <div class="space-y-1">
+            <p class="font-medium text-slate-700">Most recent thread</p>
+            <p>No threads yet.</p>
+          </div>
+          {% endmatch %}
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
 </div>
 {% endblock %}
