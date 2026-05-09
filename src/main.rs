@@ -14,6 +14,7 @@ mod config;
 mod db;
 mod error;
 mod models;
+mod session_store;
 mod templates;
 
 use config::Config;
