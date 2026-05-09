@@ -1,8 +1,4 @@
-use std::{
-    env,
-    error::Error,
-    net::{IpAddr, SocketAddr},
-};
+use std::{error::Error, net::SocketAddr};
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
 use serde::Serialize;
@@ -10,6 +6,10 @@ use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+mod config;
+
+use config::Config;
 
 #[derive(Clone, Copy)]
 struct AppState {
@@ -24,10 +24,10 @@ struct HealthResponse {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    load_env();
     init_tracing();
 
-    let bind_addr = read_bind_addr()?;
+    let config = Config::from_env()?;
+    let bind_addr = config.bind_addr;
     let state = AppState { bind_addr };
 
     let app = Router::new()
@@ -38,6 +38,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let listener = TcpListener::bind(bind_addr).await?;
     info!("listening on {}", bind_addr);
+    info!(
+        edit_window_minutes = config.edit_window_minutes,
+        database_configured = !config.database_url.is_empty(),
+        session_secret_configured = !config.session_secret.is_empty(),
+        "configuration loaded"
+    );
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -59,12 +65,6 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, Json(payload))
 }
 
-fn load_env() {
-    if dotenvy::dotenv().is_err() {
-        let _ = dotenvy::from_filename(".env.production");
-    }
-}
-
 fn init_tracing() {
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("miketang84_forum002=debug,tower_http=info"));
@@ -73,17 +73,6 @@ fn init_tracing() {
         .with(env_filter)
         .with(tracing_subscriber::fmt::layer())
         .init();
-}
-
-fn read_bind_addr() -> Result<SocketAddr, Box<dyn Error>> {
-    let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-    let port = match env::var("PORT") {
-        Ok(raw) => raw.parse::<u16>()?,
-        Err(_) => 8080,
-    };
-    let ip = host.parse::<IpAddr>()?;
-
-    Ok(SocketAddr::from((ip, port)))
 }
 
 async fn shutdown_signal() {
