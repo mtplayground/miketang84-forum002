@@ -8,6 +8,7 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use tokio::net::TcpListener;
 use tower_http::{
     services::ServeDir,
@@ -52,6 +53,8 @@ use templates::{
     RegisterTemplate, SearchResultRow, SearchTemplate, ThreadHeader, ThreadPostRow, ThreadTemplate,
 };
 use thread_store::{CreateThreadInput, ThreadStore};
+
+const STATIC_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/static");
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -222,7 +225,7 @@ fn app_router(state: AppState) -> Router {
         .route("/login", get(login_form).post(login))
         .route("/logout", axum::routing::post(logout))
         .route("/health", get(health))
-        .nest_service("/static", ServeDir::new("static"))
+        .nest_service("/static", ServeDir::new(PathBuf::from(STATIC_DIR)))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -422,7 +425,7 @@ async fn logout(State(state): State<AppState>, headers: axum::http::HeaderMap) -
 
 async fn root(
     State(state): State<AppState>,
-    _maybe_user: MaybeUser,
+    maybe_user: MaybeUser,
     csrf_token: CsrfToken,
 ) -> Result<impl IntoResponse, AppError> {
     let categories = state
@@ -435,6 +438,7 @@ async fn root(
 
     render(HomeTemplate {
         categories,
+        is_authenticated: maybe_user.0.is_some(),
         csrf_token: csrf_token.0,
     })
 }
@@ -443,7 +447,7 @@ async fn category_page(
     State(state): State<AppState>,
     Path(slug): Path<String>,
     Query(query): Query<PageQuery>,
-    _maybe_user: MaybeUser,
+    maybe_user: MaybeUser,
     csrf_token: CsrfToken,
 ) -> Result<Response, AppError> {
     let Some(category) = state.categories.get_by_slug(&slug).await? else {
@@ -467,6 +471,7 @@ async fn category_page(
         total_pages: listing.total_pages,
         prev_page: (listing.current_page > 1).then_some(listing.current_page - 1),
         next_page: (listing.current_page < listing.total_pages).then_some(listing.current_page + 1),
+        is_authenticated: maybe_user.0.is_some(),
         csrf_token: csrf_token.0,
     })?;
 
@@ -903,6 +908,7 @@ async fn public_profile(
         recent_posts: recent_posts.into_iter().map(profile_post_row).collect(),
         can_edit,
         edit_profile_url: "/me/profile".to_string(),
+        is_authenticated: maybe_user.0.is_some(),
         csrf_token: csrf_token.0,
     })?;
 
@@ -912,7 +918,7 @@ async fn public_profile(
 async fn search_page(
     State(state): State<AppState>,
     Query(query): Query<SearchQuery>,
-    _maybe_user: MaybeUser,
+    maybe_user: MaybeUser,
     csrf_token: CsrfToken,
 ) -> Result<Response, AppError> {
     let query_text = query.q.unwrap_or_default().trim().to_string();
@@ -926,6 +932,7 @@ async fn search_page(
             total_pages: 1,
             prev_page: None,
             next_page: None,
+            is_authenticated: maybe_user.0.is_some(),
             csrf_token: csrf_token.0,
         })?;
 
@@ -949,6 +956,7 @@ async fn search_page(
         prev_page: (results_page.current_page > 1).then_some(results_page.current_page - 1),
         next_page: (results_page.current_page < results_page.total_pages)
             .then_some(results_page.current_page + 1),
+        is_authenticated: maybe_user.0.is_some(),
         csrf_token: csrf_token.0,
     })?;
 
@@ -1291,6 +1299,7 @@ fn render_register_response(
         display_name: form.display_name,
         bio: form.bio,
         error_message,
+        is_authenticated: false,
         csrf_token,
     })?;
 
@@ -1306,6 +1315,7 @@ fn render_login_response(
     let html = render(LoginTemplate {
         username: form.username,
         error_message,
+        is_authenticated: false,
         csrf_token,
     })?;
 
@@ -1526,6 +1536,7 @@ fn render_new_thread(
         },
         form,
         error_message,
+        is_authenticated: true,
         csrf_token,
     })?;
 
@@ -1551,6 +1562,7 @@ fn render_edit_post(
         },
         form,
         error_message,
+        is_authenticated: true,
         csrf_token,
     })?;
 
@@ -1570,6 +1582,7 @@ fn render_edit_profile(
         },
         form,
         error_message,
+        is_authenticated: true,
         csrf_token,
     })?;
 
@@ -1680,6 +1693,7 @@ async fn render_thread_page(
         reply_form_action: format!("/t/{}/reply", thread.id),
         reply_error_message,
         reply_body,
+        is_authenticated: current_user_id.is_some(),
         csrf_token,
     })?;
 
@@ -1704,6 +1718,7 @@ async fn render_admin_categories(
         categories,
         create_form,
         error_message,
+        is_authenticated: true,
         csrf_token,
     })?;
 
@@ -1760,6 +1775,7 @@ async fn render_admin_users(
         total_pages,
         prev_page: (current_page > 1).then_some(current_page - 1),
         next_page: (current_page < total_pages).then_some(current_page + 1),
+        is_authenticated: true,
         csrf_token,
     })?;
 

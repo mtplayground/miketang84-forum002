@@ -38,6 +38,7 @@ where
 #[template(path = "home.html")]
 pub struct HomeTemplate {
     pub categories: Vec<HomeCategoryCard>,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 
@@ -47,6 +48,7 @@ pub struct AdminCategoriesTemplate {
     pub categories: Vec<AdminCategoryRow>,
     pub create_form: AdminCategoryFormValues,
     pub error_message: Option<String>,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 
@@ -59,6 +61,7 @@ pub struct AdminUsersTemplate {
     pub total_pages: i64,
     pub prev_page: Option<i64>,
     pub next_page: Option<i64>,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 
@@ -72,6 +75,7 @@ pub struct CategoryTemplate {
     pub total_pages: i64,
     pub prev_page: Option<i64>,
     pub next_page: Option<i64>,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 
@@ -81,6 +85,7 @@ pub struct NewThreadTemplate {
     pub category: CategoryHeader,
     pub form: NewThreadFormValues,
     pub error_message: Option<String>,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 
@@ -90,6 +95,7 @@ pub struct EditPostTemplate {
     pub post: EditPostContext,
     pub form: EditPostFormValues,
     pub error_message: Option<String>,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 
@@ -100,6 +106,7 @@ pub struct ProfileTemplate {
     pub recent_posts: Vec<ProfilePostRow>,
     pub can_edit: bool,
     pub edit_profile_url: String,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 
@@ -109,6 +116,7 @@ pub struct EditProfileTemplate {
     pub profile: EditProfileContext,
     pub form: EditProfileFormValues,
     pub error_message: Option<String>,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 
@@ -127,6 +135,7 @@ pub struct ThreadTemplate {
     pub reply_form_action: String,
     pub reply_error_message: Option<String>,
     pub reply_body: String,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 
@@ -140,6 +149,7 @@ pub struct SearchTemplate {
     pub total_pages: i64,
     pub prev_page: Option<i64>,
     pub next_page: Option<i64>,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 
@@ -302,6 +312,7 @@ pub struct RegisterTemplate {
     pub display_name: String,
     pub bio: String,
     pub error_message: Option<String>,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 
@@ -310,6 +321,7 @@ pub struct RegisterTemplate {
 pub struct LoginTemplate {
     pub username: String,
     pub error_message: Option<String>,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 
@@ -319,6 +331,7 @@ pub struct ErrorTemplate<'a> {
     pub status_code: u16,
     pub title: &'a str,
     pub message: &'a str,
+    pub is_authenticated: bool,
     pub csrf_token: Option<String>,
 }
 

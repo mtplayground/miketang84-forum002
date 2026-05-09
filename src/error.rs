@@ -98,6 +98,7 @@ pub fn render_error_page(status: StatusCode, title: &str, message: &str) -> Resp
         status_code: status.as_u16(),
         title,
         message,
+        is_authenticated: false,
         csrf_token: None,
     };
 
