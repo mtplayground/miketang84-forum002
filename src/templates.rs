@@ -82,6 +82,14 @@ pub struct EditPostTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "profile.html")]
+pub struct ProfileTemplate {
+    pub profile: ProfileHeader,
+    pub recent_posts: Vec<ProfilePostRow>,
+    pub csrf_token: Option<String>,
+}
+
+#[derive(Template)]
 #[template(path = "thread.html")]
 pub struct ThreadTemplate {
     pub thread: ThreadHeader,
@@ -196,6 +204,25 @@ pub struct EditPostContext {
 #[derive(Debug, Clone, Default)]
 pub struct EditPostFormValues {
     pub body: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProfileHeader {
+    pub username: String,
+    pub display_name: String,
+    pub bio: String,
+    pub created_at: DateTime<Utc>,
+    pub post_count: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProfilePostRow {
+    pub post_id: i64,
+    pub thread_id: i64,
+    pub thread_slug: String,
+    pub thread_title: String,
+    pub body: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Template)]
