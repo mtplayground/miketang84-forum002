@@ -53,6 +53,14 @@
           <p class="font-medium text-slate-700">Last activity</p>
           <p>{{ thread.last_activity_at }}</p>
         </div>
+        {% if can_moderate %}
+        <form action="/t/{{ thread.id }}/{% if thread.is_locked %}unlock{% else %}lock{% endif %}" method="post">
+          {% include "_csrf_input.html" %}
+          <button class="w-full rounded-full border border-border px-4 py-2 font-medium text-slate-700 transition hover:border-accent hover:text-accent" type="submit">
+            {% if thread.is_locked %}Unlock thread{% else %}Lock thread{% endif %}
+          </button>
+        </form>
+        {% endif %}
       </div>
     </div>
   </div>
