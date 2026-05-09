@@ -50,6 +50,15 @@ pub struct NewThreadTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "edit_post.html")]
+pub struct EditPostTemplate {
+    pub post: EditPostContext,
+    pub form: EditPostFormValues,
+    pub error_message: Option<String>,
+    pub csrf_token: Option<String>,
+}
+
+#[derive(Template)]
 #[template(path = "thread.html")]
 pub struct ThreadTemplate {
     pub thread: ThreadHeader,
@@ -145,6 +154,23 @@ pub struct ThreadPostRow {
     pub body: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub edit_url: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EditPostContext {
+    pub id: i64,
+    pub thread_id: i64,
+    pub thread_title: String,
+    pub thread_slug: String,
+    pub author_username: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EditPostFormValues {
+    pub body: String,
 }
 
 #[derive(Template)]

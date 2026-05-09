@@ -41,9 +41,9 @@ use password::{hash_password, verify_password};
 use session_store::SessionStore;
 use templates::{
     render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, CategoryHeader,
-    CategoryTemplate, CategoryThreadRow, HomeCategoryCard, HomeTemplate, LoginTemplate,
-    NewThreadFormValues, NewThreadTemplate, RegisterTemplate, ThreadHeader, ThreadPostRow,
-    ThreadTemplate,
+    CategoryTemplate, CategoryThreadRow, EditPostContext, EditPostFormValues, EditPostTemplate,
+    HomeCategoryCard, HomeTemplate, LoginTemplate, NewThreadFormValues, NewThreadTemplate,
+    RegisterTemplate, ThreadHeader, ThreadPostRow, ThreadTemplate,
 };
 use thread_store::{CreateThreadInput, ThreadStore};
 
@@ -52,6 +52,7 @@ pub(crate) struct AppState {
     pub(crate) bind_addr: std::net::SocketAddr,
     pub(crate) db: Db,
     pub(crate) categories: CategoryStore,
+    pub(crate) edit_window_minutes: u64,
     pub(crate) sessions: SessionStore,
     pub(crate) session_secret: String,
     pub(crate) threads: ThreadStore,
@@ -108,6 +109,11 @@ struct ReplyForm {
     page: Option<i64>,
 }
 
+#[derive(Debug, Default, Clone, Deserialize)]
+struct EditPostForm {
+    body: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     init_tracing();
@@ -124,6 +130,7 @@ async fn main() -> Result<(), AppError> {
         bind_addr,
         db,
         categories,
+        edit_window_minutes: config.edit_window_minutes,
         sessions,
         session_secret: config.session_secret.clone(),
         threads,
@@ -134,6 +141,7 @@ async fn main() -> Result<(), AppError> {
         .route("/c/:slug", get(category_page))
         .route("/c/:slug/t/:thread_key", get(legacy_thread_page))
         .route("/c/:slug/new", get(new_thread_form).post(create_thread))
+        .route("/p/:id/edit", get(edit_post_form).post(update_post))
         .route("/t/:id/reply", post(reply_to_thread))
         .route("/t/:thread_key", get(thread_page))
         .route("/admin/categories", get(admin_categories))
@@ -442,7 +450,7 @@ async fn thread_page(
         &state,
         thread,
         query.page.unwrap_or(1).max(1),
-        maybe_user.0.is_some(),
+        maybe_user.0.as_ref().map(|user| user.user.id),
         None,
         String::new(),
         csrf_token.0,
@@ -529,7 +537,7 @@ async fn reply_to_thread(
             &state,
             thread,
             reply_page,
-            true,
+            Some(user.0.user.id),
             Some("This thread is locked. New replies are disabled.".to_string()),
             body,
             csrf_token.0,
@@ -543,7 +551,7 @@ async fn reply_to_thread(
             &state,
             thread,
             reply_page,
-            true,
+            Some(user.0.user.id),
             Some("Reply body is required.".to_string()),
             body,
             csrf_token.0,
@@ -562,6 +570,70 @@ async fn reply_to_thread(
         thread_path(&thread.slug, thread.id),
         last_page,
         reply.post_id
+    );
+
+    Ok(Redirect::to(&redirect_target).into_response())
+}
+
+async fn edit_post_form(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    user: RequireUser,
+    csrf_token: CsrfToken,
+) -> Result<Response, AppError> {
+    let Some(post) = state.threads.get_post_detail(id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    if !can_edit_post(&post, user.0.user.id, state.edit_window_minutes) {
+        return Ok(StatusCode::FORBIDDEN.into_response());
+    }
+
+    render_edit_post(
+        &post,
+        EditPostFormValues {
+            body: post.body.clone(),
+        },
+        None,
+        csrf_token.0,
+        StatusCode::OK,
+    )
+}
+
+async fn update_post(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    user: RequireUser,
+    csrf_token: CsrfToken,
+    Form(form): Form<EditPostForm>,
+) -> Result<Response, AppError> {
+    let Some(post) = state.threads.get_post_detail(id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    if !can_edit_post(&post, user.0.user.id, state.edit_window_minutes) {
+        return Ok(StatusCode::FORBIDDEN.into_response());
+    }
+
+    let body = form.body.trim().to_string();
+    if body.is_empty() {
+        return render_edit_post(
+            &post,
+            EditPostFormValues { body },
+            Some("Post body is required.".to_string()),
+            csrf_token.0,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        );
+    }
+
+    if !state.threads.update_post_body(id, &body).await? {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+
+    let page = state.threads.page_for_post(id, 20).await?.unwrap_or(1);
+    let redirect_target = format!(
+        "/t/{}-{}?page={}#post-{}",
+        post.thread_id, post.thread_slug, page, post.id
     );
 
     Ok(Redirect::to(&redirect_target).into_response())
@@ -826,13 +898,27 @@ fn category_thread_row(thread: thread_store::ThreadListItem) -> CategoryThreadRo
     }
 }
 
-fn thread_post_row(post: thread_store::ThreadPostItem) -> ThreadPostRow {
+fn thread_post_row(
+    post: thread_store::ThreadPostItem,
+    current_user_id: Option<i64>,
+    edit_window_minutes: u64,
+) -> ThreadPostRow {
     ThreadPostRow {
         id: post.id,
         author_username: post.author_username,
         body: post.body,
         created_at: post.created_at,
         updated_at: post.updated_at,
+        edit_url: if can_edit_post_item(
+            post.author_id,
+            post.created_at,
+            current_user_id,
+            edit_window_minutes,
+        ) {
+            Some(format!("/p/{}/edit", post.id))
+        } else {
+            None
+        },
     }
 }
 
@@ -908,11 +994,36 @@ fn render_new_thread(
     Ok((status, html).into_response())
 }
 
+fn render_edit_post(
+    post: &thread_store::PostDetail,
+    form: EditPostFormValues,
+    error_message: Option<String>,
+    csrf_token: Option<String>,
+    status: StatusCode,
+) -> Result<Response, AppError> {
+    let html = render(EditPostTemplate {
+        post: EditPostContext {
+            id: post.id,
+            thread_id: post.thread_id,
+            thread_title: post.thread_title.clone(),
+            thread_slug: post.thread_slug.clone(),
+            author_username: post.author_username.clone(),
+            created_at: post.created_at,
+            updated_at: post.updated_at,
+        },
+        form,
+        error_message,
+        csrf_token,
+    })?;
+
+    Ok((status, html).into_response())
+}
+
 async fn render_thread_page(
     state: &AppState,
     thread: thread_store::ThreadDetail,
     requested_page: i64,
-    is_logged_in: bool,
+    current_user_id: Option<i64>,
     reply_error_message: Option<String>,
     reply_body: String,
     csrf_token: Option<String>,
@@ -922,7 +1033,7 @@ async fn render_thread_page(
         .threads
         .list_posts_for_thread(thread.id, requested_page, 20)
         .await?;
-    let can_reply = is_logged_in && !thread.is_locked;
+    let can_reply = current_user_id.is_some() && !thread.is_locked;
     let html = render(ThreadTemplate {
         thread: ThreadHeader {
             id: thread.id,
@@ -936,7 +1047,11 @@ async fn render_thread_page(
             is_pinned: thread.is_pinned,
             is_locked: thread.is_locked,
         },
-        posts: posts_page.posts.into_iter().map(thread_post_row).collect(),
+        posts: posts_page
+            .posts
+            .into_iter()
+            .map(|post| thread_post_row(post, current_user_id, state.edit_window_minutes))
+            .collect(),
         total_posts: posts_page.total_posts,
         current_page: posts_page.current_page,
         total_pages: posts_page.total_pages,
@@ -984,6 +1099,29 @@ fn admin_category_row(category: Category) -> AdminCategoryRow {
         slug: category.slug,
         description: category.description,
         position: category.position,
+    }
+}
+
+fn can_edit_post(post: &thread_store::PostDetail, user_id: i64, edit_window_minutes: u64) -> bool {
+    can_edit_post_item(
+        post.author_id,
+        post.created_at,
+        Some(user_id),
+        edit_window_minutes,
+    )
+}
+
+fn can_edit_post_item(
+    author_id: i64,
+    created_at: chrono::DateTime<Utc>,
+    current_user_id: Option<i64>,
+    edit_window_minutes: u64,
+) -> bool {
+    match current_user_id {
+        Some(user_id) if user_id == author_id => {
+            Utc::now() <= created_at + Duration::minutes(edit_window_minutes as i64)
+        }
+        _ => false,
     }
 }
 

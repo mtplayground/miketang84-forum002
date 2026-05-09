@@ -64,6 +64,11 @@
         <div class="space-y-2">
           <p class="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Post #{{ post.id }}</p>
           <h3 class="text-lg font-semibold text-slate-900">{{ post.author_username }}</h3>
+          {% match post.edit_url %}
+          {% when Some with (url) %}
+          <a class="text-sm font-medium text-accent hover:underline" href="{{ url }}">Edit post</a>
+          {% when None %}
+          {% endmatch %}
         </div>
         <div class="text-sm text-slate-500">
           <p>Created: {{ post.created_at }}</p>
@@ -99,7 +104,7 @@
   <section class="space-y-4 rounded-[1.75rem] border border-border bg-slate-50/80 p-6">
     <div class="space-y-1">
       <h3 class="text-2xl font-semibold tracking-tight text-slate-900">Reply</h3>
-      <p class="text-sm text-slate-500">This form becomes functional with the reply handler in the next issue.</p>
+      <p class="text-sm text-slate-500">Replying is enabled for logged-in users while the thread remains unlocked.</p>
     </div>
     <form class="grid gap-4" action="{{ reply_form_action }}" method="post">
       {% include "_csrf_input.html" %}

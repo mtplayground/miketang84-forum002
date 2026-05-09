@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Post #{{ post.id }} | miketang84-forum002{% endblock %}
+
+{% block flash_messages %}
+{% match error_message %}
+{% when Some with (message) %}
+<div class="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+  {{ message }}
+</div>
+{% when None %}
+<div class="rounded-2xl border border-dashed border-border bg-white/70 px-4 py-3 text-sm text-slate-600">
+  You can edit your own post only within the configured edit window.
+</div>
+{% endmatch %}
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+  <div class="space-y-3">
+    <div class="flex items-center gap-3 text-sm text-slate-500">
+      <a class="font-medium text-accent hover:underline" href="/">Forum index</a>
+      <span>/</span>
+      <a class="font-medium text-accent hover:underline" href="/t/{{ post.thread_id }}-{{ post.thread_slug }}">{{ post.thread_title }}</a>
+      <span>/</span>
+      <span>Edit post #{{ post.id }}</span>
+    </div>
+    <h2 class="text-4xl font-semibold tracking-tight text-slate-900">Edit post #{{ post.id }}</h2>
+    <p class="text-sm text-slate-500">
+      Written by <span class="font-medium text-slate-700">{{ post.author_username }}</span>.
+      Created {{ post.created_at }}. Last updated {{ post.updated_at }}.
+    </p>
+  </div>
+
+  <form class="grid gap-6" action="/p/{{ post.id }}/edit" method="post">
+    {% include "_csrf_input.html" %}
+    <label class="grid gap-2">
+      <span class="text-sm font-medium text-slate-700">Body</span>
+      <textarea
+        class="min-h-56 rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+        name="body"
+        required>{{ form.body }}</textarea>
+    </label>
+
+    <div class="flex items-center justify-between gap-4">
+      <a class="text-sm font-medium text-accent hover:underline" href="/t/{{ post.thread_id }}-{{ post.thread_slug }}">Back to thread</a>
+      <button
+        class="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-teal-700"
+        type="submit">
+        Save changes
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}
