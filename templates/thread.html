@@ -3,9 +3,16 @@
 {% block title %}{{ thread.title }} | miketang84-forum002{% endblock %}
 
 {% block flash_messages %}
-<div class="rounded-2xl border border-dashed border-border bg-white/70 px-4 py-3 text-sm text-slate-600">
-  Posts are shown chronologically. Reply posting lands in the next issue; the form is visible here when allowed.
+{% match reply_error_message %}
+{% when Some with (message) %}
+<div class="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+  {{ message }}
 </div>
+{% when None %}
+<div class="rounded-2xl border border-dashed border-border bg-white/70 px-4 py-3 text-sm text-slate-600">
+  Posts are shown chronologically.
+</div>
+{% endmatch %}
 {% endblock %}
 
 {% block content %}
@@ -96,11 +103,12 @@
     </div>
     <form class="grid gap-4" action="{{ reply_form_action }}" method="post">
       {% include "_csrf_input.html" %}
+      <input type="hidden" name="page" value="{{ current_page }}">
       <textarea
         class="min-h-40 rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
         name="body"
         placeholder="Write your reply"
-        required></textarea>
+        required>{{ reply_body }}</textarea>
       <div class="flex justify-end">
         <button
           class="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-teal-700"
