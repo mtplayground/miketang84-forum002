@@ -1,6 +1,6 @@
 use axum::{
     extract::{FromRequestParts, State},
-    http::{header::COOKIE, request::Parts, HeaderMap, HeaderValue, StatusCode},
+    http::{header::{COOKIE, LOCATION}, request::Parts, HeaderMap, HeaderValue, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -26,6 +26,15 @@ pub struct CurrentUser {
 
 #[derive(Clone, Debug, Default)]
 pub struct MaybeUser(pub Option<CurrentUser>);
+
+#[allow(dead_code)]
+pub struct RequireUser(pub CurrentUser);
+
+#[allow(dead_code)]
+pub struct RequireModerator(pub CurrentUser);
+
+#[allow(dead_code)]
+pub struct RequireAdmin(pub CurrentUser);
 
 pub async fn session_cookie_middleware(
     State(state): State<AppState>,
@@ -108,6 +117,60 @@ where
     }
 }
 
+#[axum::async_trait]
+impl<S> FromRequestParts<S> for RequireUser
+where
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let maybe_user = MaybeUser::from_request_parts(parts, state).await?;
+        let user = maybe_user
+            .0
+            .ok_or_else(|| (StatusCode::FOUND, [(LOCATION, "/login")]).into_response())?;
+
+        Ok(Self(user))
+    }
+}
+
+#[axum::async_trait]
+impl<S> FromRequestParts<S> for RequireModerator
+where
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let user = RequireUser::from_request_parts(parts, state).await?.0;
+
+        if matches!(user.user.role, crate::models::user::Role::Moderator | crate::models::user::Role::Admin)
+        {
+            Ok(Self(user))
+        } else {
+            Err(StatusCode::FORBIDDEN.into_response())
+        }
+    }
+}
+
+#[axum::async_trait]
+impl<S> FromRequestParts<S> for RequireAdmin
+where
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let user = RequireUser::from_request_parts(parts, state).await?.0;
+
+        if matches!(user.user.role, crate::models::user::Role::Admin) {
+            Ok(Self(user))
+        } else {
+            Err(StatusCode::FORBIDDEN.into_response())
+        }
+    }
+}
+
 pub fn build_session_cookie(
     session_id: Uuid,
     session_secret: &str,
@@ -184,4 +247,144 @@ where
     E: std::fmt::Display,
 {
     std::io::Error::new(std::io::ErrorKind::InvalidInput, err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{extract::Extension, http::Request, routing::get, Router};
+    use chrono::Utc;
+    use tower::ServiceExt;
+    use uuid::Uuid;
+
+    use super::{CurrentUser, MaybeUser, RequireAdmin, RequireModerator, RequireUser};
+    use crate::models::user::{Role, User};
+
+    #[tokio::test]
+    async fn require_user_redirects_guest_to_login() {
+        async fn handler(_: RequireUser) -> &'static str {
+            "ok"
+        }
+
+        let response = Router::new()
+            .route("/", get(handler))
+            .oneshot(Request::builder().uri("/").body(axum::body::Body::empty()).unwrap())
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), axum::http::StatusCode::FOUND);
+        assert_eq!(
+            response.headers().get(axum::http::header::LOCATION).unwrap(),
+            "/login"
+        );
+    }
+
+    #[tokio::test]
+    async fn require_user_allows_authenticated_user() {
+        async fn handler(_: RequireUser) -> &'static str {
+            "ok"
+        }
+
+        let response = Router::new()
+            .route("/", get(handler))
+            .layer(Extension(MaybeUser(Some(test_user(Role::User)))))
+            .oneshot(Request::builder().uri("/").body(axum::body::Body::empty()).unwrap())
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn require_moderator_redirects_guest_to_login() {
+        async fn handler(_: RequireModerator) -> &'static str {
+            "ok"
+        }
+
+        let response = Router::new()
+            .route("/", get(handler))
+            .oneshot(Request::builder().uri("/").body(axum::body::Body::empty()).unwrap())
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), axum::http::StatusCode::FOUND);
+    }
+
+    #[tokio::test]
+    async fn require_moderator_forbids_plain_user() {
+        async fn handler(_: RequireModerator) -> &'static str {
+            "ok"
+        }
+
+        let response = Router::new()
+            .route("/", get(handler))
+            .layer(Extension(MaybeUser(Some(test_user(Role::User)))))
+            .oneshot(Request::builder().uri("/").body(axum::body::Body::empty()).unwrap())
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn require_moderator_allows_moderator() {
+        async fn handler(_: RequireModerator) -> &'static str {
+            "ok"
+        }
+
+        let response = Router::new()
+            .route("/", get(handler))
+            .layer(Extension(MaybeUser(Some(test_user(Role::Moderator)))))
+            .oneshot(Request::builder().uri("/").body(axum::body::Body::empty()).unwrap())
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn require_admin_forbids_moderator() {
+        async fn handler(_: RequireAdmin) -> &'static str {
+            "ok"
+        }
+
+        let response = Router::new()
+            .route("/", get(handler))
+            .layer(Extension(MaybeUser(Some(test_user(Role::Moderator)))))
+            .oneshot(Request::builder().uri("/").body(axum::body::Body::empty()).unwrap())
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn require_admin_allows_admin() {
+        async fn handler(_: RequireAdmin) -> &'static str {
+            "ok"
+        }
+
+        let response = Router::new()
+            .route("/", get(handler))
+            .layer(Extension(MaybeUser(Some(test_user(Role::Admin)))))
+            .oneshot(Request::builder().uri("/").body(axum::body::Body::empty()).unwrap())
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    fn test_user(role: Role) -> CurrentUser {
+        CurrentUser {
+            session_id: Uuid::new_v4(),
+            user: User {
+                id: 1,
+                username: "tester".to_string(),
+                password_hash: "hash".to_string(),
+                display_name: "Tester".to_string(),
+                bio: String::new(),
+                role,
+                created_at: Utc::now(),
+            },
+        }
+    }
 }
