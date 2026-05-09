@@ -16,9 +16,16 @@
       <span>/</span>
       <span>/{{ category.slug }}</span>
     </div>
+    <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+      <div class="space-y-3">
     <h2 class="text-4xl font-semibold tracking-tight text-slate-900">{{ category.name }}</h2>
     <p class="max-w-3xl text-lg leading-8 text-slate-600">{{ category.description }}</p>
     <p class="text-sm text-slate-500">{{ total_threads }} total thread{% if total_threads != 1 %}s{% endif %}</p>
+      </div>
+      <a class="rounded-full bg-accent px-5 py-3 text-sm font-semibold text-white transition hover:bg-teal-700" href="/c/{{ category.slug }}/new">
+        New thread
+      </a>
+    </div>
   </div>
 
   {% if threads.is_empty() %}

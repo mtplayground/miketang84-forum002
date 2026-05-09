@@ -29,7 +29,7 @@ mod thread_store;
 
 use auth::{
     build_session_cookie, clear_session_cookie, signed_session_id_from_headers, CsrfToken, MaybeUser,
-    RequireAdmin,
+    RequireAdmin, RequireUser,
 };
 use category_store::{CategoryStore, CreateCategoryInput, UpdateCategoryInput};
 use config::Config;
@@ -42,9 +42,9 @@ use session_store::SessionStore;
 use templates::{
     render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, CategoryHeader,
     CategoryTemplate, CategoryThreadRow, HomeCategoryCard, HomeTemplate, LoginTemplate,
-    RegisterTemplate,
+    NewThreadFormValues, NewThreadTemplate, RegisterTemplate,
 };
-use thread_store::ThreadStore;
+use thread_store::{CreateThreadInput, ThreadStore};
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -95,6 +95,12 @@ struct PageQuery {
     page: Option<i64>,
 }
 
+#[derive(Debug, Default, Clone, Deserialize)]
+struct NewThreadForm {
+    title: String,
+    body: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     init_tracing();
@@ -119,6 +125,7 @@ async fn main() -> Result<(), AppError> {
     let app = Router::new()
         .route("/", get(root))
         .route("/c/:slug", get(category_page))
+        .route("/c/:slug/new", get(new_thread_form).post(create_thread))
         .route("/admin/categories", get(admin_categories))
         .route("/admin/categories/create", post(create_category))
         .route("/admin/categories/:id/update", post(update_category))
@@ -382,6 +389,65 @@ async fn category_page(
     Ok(html.into_response())
 }
 
+async fn new_thread_form(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    _user: RequireUser,
+    csrf_token: CsrfToken,
+) -> Result<Response, AppError> {
+    let Some(category) = state.categories.get_by_slug(&slug).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    render_new_thread(
+        &category,
+        NewThreadFormValues::default(),
+        None,
+        csrf_token.0,
+        StatusCode::OK,
+    )
+}
+
+async fn create_thread(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    user: RequireUser,
+    csrf_token: CsrfToken,
+    Form(form): Form<NewThreadForm>,
+) -> Result<Response, AppError> {
+    let Some(category) = state.categories.get_by_slug(&slug).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    let normalized_form = normalize_new_thread_form(form);
+
+    if let Err(message) = validate_new_thread_form(&normalized_form) {
+        return render_new_thread(
+            &category,
+            NewThreadFormValues {
+                title: normalized_form.title.clone(),
+                body: normalized_form.body.clone(),
+            },
+            Some(message),
+            csrf_token.0,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        );
+    }
+
+    let thread = state
+        .threads
+        .create_thread_with_initial_post(&CreateThreadInput {
+            category_id: category.id,
+            author_id: user.0.user.id,
+            title: normalized_form.title.clone(),
+            slug: slugify(&normalized_form.title),
+            body: normalized_form.body.clone(),
+        })
+        .await?;
+
+    Ok(Redirect::to(&thread_path(&category.slug, thread.id, &thread.slug)).into_response())
+}
+
 async fn admin_categories(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -638,6 +704,73 @@ fn category_thread_row(thread: thread_store::ThreadListItem) -> CategoryThreadRo
         is_pinned: thread.is_pinned,
         is_locked: thread.is_locked,
     }
+}
+
+fn normalize_new_thread_form(form: NewThreadForm) -> NewThreadForm {
+    NewThreadForm {
+        title: form.title.trim().to_string(),
+        body: form.body.trim().to_string(),
+    }
+}
+
+fn validate_new_thread_form(form: &NewThreadForm) -> Result<(), String> {
+    if !(3..=120).contains(&form.title.len()) {
+        return Err("Thread title must be between 3 and 120 characters.".to_string());
+    }
+
+    if form.body.is_empty() {
+        return Err("The first post body is required.".to_string());
+    }
+
+    Ok(())
+}
+
+fn slugify(title: &str) -> String {
+    let mut slug = String::with_capacity(title.len());
+    let mut previous_was_dash = false;
+
+    for ch in title.chars().flat_map(|ch| ch.to_lowercase()) {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            previous_was_dash = false;
+        } else if !previous_was_dash {
+            slug.push('-');
+            previous_was_dash = true;
+        }
+    }
+
+    let slug = slug.trim_matches('-').to_string();
+
+    if slug.is_empty() {
+        "thread".to_string()
+    } else {
+        slug
+    }
+}
+
+fn thread_path(category_slug: &str, thread_id: i64, thread_slug: &str) -> String {
+    format!("/c/{category_slug}/t/{thread_id}-{thread_slug}")
+}
+
+fn render_new_thread(
+    category: &Category,
+    form: NewThreadFormValues,
+    error_message: Option<String>,
+    csrf_token: Option<String>,
+    status: StatusCode,
+) -> Result<Response, AppError> {
+    let html = render(NewThreadTemplate {
+        category: CategoryHeader {
+            name: category.name.clone(),
+            slug: category.slug.clone(),
+            description: category.description.clone(),
+        },
+        form,
+        error_message,
+        csrf_token,
+    })?;
+
+    Ok((status, html).into_response())
 }
 
 async fn render_admin_categories(
