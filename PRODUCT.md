@@ -7,6 +7,7 @@
 ## What it currently does
 
 - User registration, login, logout, signed session cookies, and CSRF protection
+- Anonymous navigation exposes `Register` / `Login`, while authenticated sessions get `Logout`
 - Role-aware access control for `user`, `moderator`, and `admin`
 - Category listing and admin category management
 - Thread creation, paginated thread/category views, replies, and public user profiles
@@ -15,6 +16,7 @@
 - Admin user management with role assignment and self-demotion protection
 - PostgreSQL full-text search across thread titles and post bodies
 - Seed binary for admin bootstrap plus starter categories/threads
+- Fresh deployments are expected to be bootstrapped by running the seed binary once
 - Docker Compose flow for app + PostgreSQL local development
 
 ## Product and data conventions
