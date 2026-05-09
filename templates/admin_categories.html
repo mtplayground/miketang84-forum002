@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Categories | miketang84-forum002{% endblock %}
+
+{% block flash_messages %}
+{% match error_message %}
+{% when Some with (message) %}
+<div class="rounded-2xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+  {{ message }}
+</div>
+{% when None %}
+<div class="rounded-2xl border border-dashed border-border bg-white/70 px-4 py-3 text-sm text-slate-600">
+  Manage forum categories here. Reordering is separate from editing details.
+</div>
+{% endmatch %}
+{% endblock %}
+
+{% block content %}
+<div class="space-y-10">
+  <div class="space-y-3">
+    <p class="text-sm font-semibold uppercase tracking-[0.3em] text-accent">Administration</p>
+    <h2 class="text-4xl font-semibold tracking-tight text-slate-900">Category management</h2>
+    <p class="max-w-3xl text-lg leading-8 text-slate-600">
+      Create categories, update their metadata, adjust their order on the front page, or remove them entirely.
+    </p>
+  </div>
+
+  <section class="grid gap-6 rounded-[1.75rem] border border-border bg-slate-50/80 p-6">
+    <div class="space-y-1">
+      <h3 class="text-2xl font-semibold tracking-tight text-slate-900">Create category</h3>
+      <p class="text-sm text-slate-500">New categories appear on the home page in ascending position order.</p>
+    </div>
+
+    <form class="grid gap-4 md:grid-cols-2" action="/admin/categories/create" method="post">
+      {% include "_csrf_input.html" %}
+      <label class="grid gap-2">
+        <span class="text-sm font-medium text-slate-700">Name</span>
+        <input
+          class="rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+          type="text"
+          name="name"
+          value="{{ create_form.name }}"
+          required>
+      </label>
+
+      <label class="grid gap-2">
+        <span class="text-sm font-medium text-slate-700">Slug</span>
+        <input
+          class="rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+          type="text"
+          name="slug"
+          value="{{ create_form.slug }}"
+          required>
+      </label>
+
+      <label class="grid gap-2 md:col-span-2">
+        <span class="text-sm font-medium text-slate-700">Description</span>
+        <textarea
+          class="min-h-28 rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+          name="description"
+          required>{{ create_form.description }}</textarea>
+      </label>
+
+      <label class="grid gap-2 md:max-w-40">
+        <span class="text-sm font-medium text-slate-700">Position</span>
+        <input
+          class="rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+          type="number"
+          name="position"
+          value="{{ create_form.position }}"
+          required>
+      </label>
+
+      <div class="flex items-end justify-end md:col-span-2">
+        <button
+          class="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-teal-700"
+          type="submit">
+          Create category
+        </button>
+      </div>
+    </form>
+  </section>
+
+  <section class="space-y-6">
+    <div class="space-y-1">
+      <h3 class="text-2xl font-semibold tracking-tight text-slate-900">Existing categories</h3>
+      <p class="text-sm text-slate-500">Each category card has separate forms for editing, reordering, and deletion.</p>
+    </div>
+
+    {% if categories.is_empty() %}
+    <div class="rounded-[1.75rem] border border-dashed border-border bg-slate-50 px-6 py-8 text-slate-600">
+      No categories have been created yet.
+    </div>
+    {% else %}
+    <div class="grid gap-6">
+      {% for category in categories %}
+      <article class="grid gap-5 rounded-[1.75rem] border border-border bg-slate-50/80 p-6 shadow-sm">
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p class="text-sm font-semibold uppercase tracking-[0.2em] text-accent">Category #{{ category.id }}</p>
+            <h4 class="mt-1 text-2xl font-semibold tracking-tight text-slate-900">{{ category.name }}</h4>
+          </div>
+
+          <form class="flex items-end gap-3" action="/admin/categories/{{ category.id }}/reorder" method="post">
+            {% include "_csrf_input.html" %}
+            <label class="grid gap-2">
+              <span class="text-xs font-medium uppercase tracking-[0.2em] text-slate-500">Position</span>
+              <input
+                class="w-28 rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+                type="number"
+                name="position"
+                value="{{ category.position }}"
+                required>
+            </label>
+            <button
+              class="rounded-full border border-border px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-accent hover:text-accent"
+              type="submit">
+              Save order
+            </button>
+          </form>
+        </div>
+
+        <form class="grid gap-4 md:grid-cols-2" action="/admin/categories/{{ category.id }}/update" method="post">
+          {% include "_csrf_input.html" %}
+          <label class="grid gap-2">
+            <span class="text-sm font-medium text-slate-700">Name</span>
+            <input
+              class="rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+              type="text"
+              name="name"
+              value="{{ category.name }}"
+              required>
+          </label>
+
+          <label class="grid gap-2">
+            <span class="text-sm font-medium text-slate-700">Slug</span>
+            <input
+              class="rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+              type="text"
+              name="slug"
+              value="{{ category.slug }}"
+              required>
+          </label>
+
+          <label class="grid gap-2 md:col-span-2">
+            <span class="text-sm font-medium text-slate-700">Description</span>
+            <textarea
+              class="min-h-28 rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+              name="description"
+              required>{{ category.description }}</textarea>
+          </label>
+
+          <input type="hidden" name="position" value="{{ category.position }}">
+
+          <div class="md:col-span-2 flex items-center justify-between gap-4">
+            <p class="text-sm text-slate-500">Slug values use lowercase letters, numbers, and hyphens.</p>
+            <button
+              class="rounded-full bg-slate-900 px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+              type="submit">
+              Save changes
+            </button>
+          </div>
+        </form>
+
+        <form action="/admin/categories/{{ category.id }}/delete" method="post">
+          {% include "_csrf_input.html" %}
+          <button
+            class="rounded-full border border-rose-300 px-5 py-3 text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
+            type="submit">
+            Delete category
+          </button>
+        </form>
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
