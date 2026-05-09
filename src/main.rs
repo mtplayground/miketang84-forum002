@@ -1957,6 +1957,265 @@ mod tests {
         );
     }
 
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    #[ignore = "requires a direct PostgreSQL test database; the Fly proxy endpoint cannot provision sqlx::test databases"]
+    async fn create_thread_and_reply_flow(pool: PgPool) {
+        let app = test_app(pool.clone());
+        let category_id = create_category(&pool, "general", "General discussion").await;
+        let user_cookie = register_user(&app, "writer", "password123").await;
+        let user_id = user_id_by_username(&pool, "writer").await;
+
+        let (_new_thread_cookie, new_thread_csrf) =
+            fetch_csrf(&app, "/c/general/new", Some(&user_cookie)).await;
+        let create_thread_response = post_form(
+            &app,
+            "/c/general/new",
+            Some(&user_cookie),
+            &[
+                ("title", "Hello Forum"),
+                ("body", "Opening post"),
+                (auth::CSRF_FORM_FIELD, &new_thread_csrf),
+            ],
+        )
+        .await;
+        assert_eq!(create_thread_response.status(), StatusCode::SEE_OTHER);
+
+        let thread_location = response_location(&create_thread_response).expect("thread redirect should exist");
+        let thread_id = thread_id_by_title(&pool, "Hello Forum").await;
+        let thread_page_response = get(&app, &thread_location, Some(&user_cookie)).await;
+        assert_eq!(thread_page_response.status(), StatusCode::OK);
+
+        let (_thread_cookie, reply_csrf) = fetch_csrf(&app, &thread_location, Some(&user_cookie)).await;
+        let reply_response = post_form(
+            &app,
+            &format!("/t/{thread_id}/reply"),
+            Some(&user_cookie),
+            &[
+                ("body", "Second post"),
+                ("page", "1"),
+                (auth::CSRF_FORM_FIELD, &reply_csrf),
+            ],
+        )
+        .await;
+        assert_eq!(reply_response.status(), StatusCode::SEE_OTHER);
+
+        let total_posts = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*)
+            FROM posts
+            WHERE thread_id = $1
+              AND deleted_at IS NULL
+            "#,
+        )
+        .bind(thread_id)
+        .fetch_one(&pool)
+        .await
+        .expect("post count query should succeed");
+        assert_eq!(total_posts, 2);
+
+        let reply_author_id = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT author_id
+            FROM posts
+            WHERE thread_id = $1
+            ORDER BY id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(thread_id)
+        .fetch_one(&pool)
+        .await
+        .expect("reply author query should succeed");
+        assert_eq!(reply_author_id, user_id);
+
+        let category_page_response = get(&app, "/c/general", Some(&user_cookie)).await;
+        let category_page_body = response_text(category_page_response).await;
+        assert!(category_page_body.contains("Hello Forum"));
+        assert!(category_page_body.contains("1"));
+
+        let _ = category_id;
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    #[ignore = "requires a direct PostgreSQL test database; the Fly proxy endpoint cannot provision sqlx::test databases"]
+    async fn edit_window_enforcement_and_lock_blocks_reply(pool: PgPool) {
+        let app = test_app(pool.clone());
+        create_category(&pool, "support", "Support").await;
+        let user_cookie = register_user(&app, "editor", "password123").await;
+        let moderator_cookie = register_user(&app, "moduser", "password123").await;
+        set_user_role(&pool, "moduser", "moderator").await;
+
+        let (_new_thread_cookie, new_thread_csrf) =
+            fetch_csrf(&app, "/c/support/new", Some(&user_cookie)).await;
+        let create_thread_response = post_form(
+            &app,
+            "/c/support/new",
+            Some(&user_cookie),
+            &[
+                ("title", "Need Help"),
+                ("body", "First post"),
+                (auth::CSRF_FORM_FIELD, &new_thread_csrf),
+            ],
+        )
+        .await;
+        assert_eq!(create_thread_response.status(), StatusCode::SEE_OTHER);
+
+        let thread_id = thread_id_by_title(&pool, "Need Help").await;
+        let thread_path = response_location(&create_thread_response).expect("thread redirect should exist");
+        let post_id = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT id
+            FROM posts
+            WHERE thread_id = $1
+            ORDER BY id ASC
+            LIMIT 1
+            "#,
+        )
+        .bind(thread_id)
+        .fetch_one(&pool)
+        .await
+        .expect("post id query should succeed");
+
+        sqlx::query(
+            r#"
+            UPDATE posts
+            SET created_at = NOW() - INTERVAL '1 day',
+                updated_at = NOW() - INTERVAL '1 day'
+            WHERE id = $1
+            "#,
+        )
+        .bind(post_id)
+        .execute(&pool)
+        .await
+        .expect("post timestamps should update");
+
+        let edit_response = get(&app, &format!("/p/{post_id}/edit"), Some(&user_cookie)).await;
+        assert_eq!(edit_response.status(), StatusCode::FORBIDDEN);
+
+        let (_moderator_page_cookie, moderator_csrf) =
+            fetch_csrf(&app, &thread_path, Some(&moderator_cookie)).await;
+        let lock_response = post_form(
+            &app,
+            &format!("/t/{thread_id}/lock"),
+            Some(&moderator_cookie),
+            &[(auth::CSRF_FORM_FIELD, &moderator_csrf)],
+        )
+        .await;
+        assert_eq!(lock_response.status(), StatusCode::SEE_OTHER);
+
+        let (_reply_page_cookie, reply_csrf) = fetch_csrf(&app, &thread_path, Some(&user_cookie)).await;
+        let locked_reply_response = post_form(
+            &app,
+            &format!("/t/{thread_id}/reply"),
+            Some(&user_cookie),
+            &[
+                ("body", "Can I still reply?"),
+                ("page", "1"),
+                (auth::CSRF_FORM_FIELD, &reply_csrf),
+            ],
+        )
+        .await;
+        assert_eq!(locked_reply_response.status(), StatusCode::LOCKED);
+        let locked_body = response_text(locked_reply_response).await;
+        assert!(locked_body.contains("This thread is locked. New replies are disabled."));
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    #[ignore = "requires a direct PostgreSQL test database; the Fly proxy endpoint cannot provision sqlx::test databases"]
+    async fn moderator_delete_and_role_guard_rejections(pool: PgPool) {
+        let app = test_app(pool.clone());
+        create_category(&pool, "meta", "Meta").await;
+        let author_cookie = register_user(&app, "author", "password123").await;
+        let moderator_cookie = register_user(&app, "modboss", "password123").await;
+        let plain_cookie = register_user(&app, "plainuser", "password123").await;
+        set_user_role(&pool, "modboss", "moderator").await;
+
+        let (_new_thread_cookie, new_thread_csrf) =
+            fetch_csrf(&app, "/c/meta/new", Some(&author_cookie)).await;
+        let create_thread_response = post_form(
+            &app,
+            "/c/meta/new",
+            Some(&author_cookie),
+            &[
+                ("title", "Moderation Target"),
+                ("body", "Original body"),
+                (auth::CSRF_FORM_FIELD, &new_thread_csrf),
+            ],
+        )
+        .await;
+        assert_eq!(create_thread_response.status(), StatusCode::SEE_OTHER);
+
+        let thread_id = thread_id_by_title(&pool, "Moderation Target").await;
+        let thread_path = response_location(&create_thread_response).expect("thread redirect should exist");
+        let post_id = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT id
+            FROM posts
+            WHERE thread_id = $1
+            ORDER BY id ASC
+            LIMIT 1
+            "#,
+        )
+        .bind(thread_id)
+        .fetch_one(&pool)
+        .await
+        .expect("post id query should succeed");
+
+        let (guest_cookie, guest_csrf) = fetch_csrf(&app, &thread_path, None).await;
+        let guest_lock_response = post_form(
+            &app,
+            &format!("/t/{thread_id}/lock"),
+            Some(&guest_cookie),
+            &[(auth::CSRF_FORM_FIELD, &guest_csrf)],
+        )
+        .await;
+        assert_eq!(guest_lock_response.status(), StatusCode::FOUND);
+        assert_eq!(
+            guest_lock_response
+                .headers()
+                .get(header::LOCATION)
+                .expect("guest redirect should have location"),
+            "/login"
+        );
+
+        let (_plain_cookie_page, plain_csrf) = fetch_csrf(&app, &thread_path, Some(&plain_cookie)).await;
+        let plain_lock_response = post_form(
+            &app,
+            &format!("/t/{thread_id}/lock"),
+            Some(&plain_cookie),
+            &[(auth::CSRF_FORM_FIELD, &plain_csrf)],
+        )
+        .await;
+        assert_eq!(plain_lock_response.status(), StatusCode::FORBIDDEN);
+
+        let (_moderator_page_cookie, moderator_csrf) =
+            fetch_csrf(&app, &thread_path, Some(&moderator_cookie)).await;
+        let mod_delete_response = post_form(
+            &app,
+            &format!("/p/{post_id}/mod-delete"),
+            Some(&moderator_cookie),
+            &[(auth::CSRF_FORM_FIELD, &moderator_csrf)],
+        )
+        .await;
+        assert_eq!(mod_delete_response.status(), StatusCode::SEE_OTHER);
+
+        let deleted_row = sqlx::query_as::<_, (Option<chrono::DateTime<chrono::Utc>>, Option<i64>)>(
+            r#"
+            SELECT deleted_at, deleted_by
+            FROM posts
+            WHERE id = $1
+            "#,
+        )
+        .bind(post_id)
+        .fetch_one(&pool)
+        .await
+        .expect("deleted post row should load");
+        assert!(deleted_row.0.is_some());
+
+        let moderator_id = user_id_by_username(&pool, "modboss").await;
+        assert_eq!(deleted_row.1, Some(moderator_id));
+    }
+
     fn test_app(pool: PgPool) -> axum::Router {
         let db = crate::db::Db::from_pool(pool);
         let state = build_state(
@@ -2016,12 +2275,100 @@ mod tests {
             .expect("request should succeed")
     }
 
+    async fn register_user(app: &axum::Router, username: &str, password: &str) -> String {
+        let (cookie, csrf_token) = fetch_csrf(app, "/register", None).await;
+        let response = post_form(
+            app,
+            "/register",
+            Some(&cookie),
+            &[
+                ("username", username),
+                ("display_name", username),
+                ("bio", ""),
+                ("password", password),
+                (auth::CSRF_FORM_FIELD, &csrf_token),
+            ],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        response_cookie(&response).expect("register should issue auth cookie")
+    }
+
+    async fn create_category(pool: &PgPool, slug: &str, name: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            r#"
+            INSERT INTO categories (name, slug, description, position)
+            VALUES ($1, $2, $3, 0)
+            RETURNING id
+            "#,
+        )
+        .bind(name)
+        .bind(slug)
+        .bind(format!("{name} description"))
+        .fetch_one(pool)
+        .await
+        .expect("category insert should succeed")
+    }
+
+    async fn set_user_role(pool: &PgPool, username: &str, role: &str) {
+        sqlx::query(
+            r#"
+            UPDATE users
+            SET role = $2::user_role
+            WHERE username = $1
+            "#,
+        )
+        .bind(username)
+        .bind(role)
+        .execute(pool)
+        .await
+        .expect("role update should succeed");
+    }
+
+    async fn user_id_by_username(pool: &PgPool, username: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT id
+            FROM users
+            WHERE username = $1
+            "#,
+        )
+        .bind(username)
+        .fetch_one(pool)
+        .await
+        .expect("user id query should succeed")
+    }
+
+    async fn thread_id_by_title(pool: &PgPool, title: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT id
+            FROM threads
+            WHERE title = $1
+            ORDER BY id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(title)
+        .fetch_one(pool)
+        .await
+        .expect("thread id query should succeed")
+    }
+
     fn response_cookie(response: &axum::response::Response) -> Option<String> {
         response
             .headers()
             .get(header::SET_COOKIE)
             .and_then(|value| value.to_str().ok())
             .and_then(|cookie| cookie.split(';').next().map(str::to_string))
+    }
+
+    fn response_location(response: &axum::response::Response) -> Option<String> {
+        response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string)
     }
 
     async fn response_text(response: axum::response::Response) -> String {
