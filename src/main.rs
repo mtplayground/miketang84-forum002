@@ -25,7 +25,9 @@ mod password;
 mod session_store;
 mod templates;
 
-use auth::{build_session_cookie, clear_session_cookie, signed_session_id_from_headers, MaybeUser};
+use auth::{
+    build_session_cookie, clear_session_cookie, signed_session_id_from_headers, CsrfToken, MaybeUser,
+};
 use config::Config;
 use db::Db;
 use error::AppError;
@@ -89,6 +91,10 @@ async fn main() -> Result<(), AppError> {
         .nest_service("/static", ServeDir::new("static"))
         .layer(middleware::from_fn_with_state(
             state.clone(),
+            auth::csrf_verification_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
             auth::session_cookie_middleware,
         ))
         .layer(
@@ -116,16 +122,17 @@ async fn main() -> Result<(), AppError> {
     Ok(())
 }
 
-async fn register_form() -> Result<impl IntoResponse, AppError> {
-    render_register(RegistrationForm::default(), None)
+async fn register_form(csrf_token: CsrfToken) -> Result<impl IntoResponse, AppError> {
+    render_register(RegistrationForm::default(), None, csrf_token.0)
 }
 
-async fn login_form() -> Result<impl IntoResponse, AppError> {
-    render_login(LoginForm::default(), None)
+async fn login_form(csrf_token: CsrfToken) -> Result<impl IntoResponse, AppError> {
+    render_login(LoginForm::default(), None, csrf_token.0)
 }
 
 async fn register(
     State(state): State<AppState>,
+    csrf_token: CsrfToken,
     Form(form): Form<RegistrationForm>,
 ) -> Result<Response, AppError> {
     let username = form.username.trim().to_lowercase();
@@ -149,6 +156,7 @@ async fn register(
             normalized_form,
             Some(message),
             StatusCode::UNPROCESSABLE_ENTITY,
+            csrf_token.0.clone(),
         );
     }
 
@@ -170,6 +178,7 @@ async fn register(
             normalized_form,
             Some("That username is already taken.".to_string()),
             StatusCode::UNPROCESSABLE_ENTITY,
+            csrf_token.0.clone(),
         );
     }
 
@@ -197,6 +206,7 @@ async fn register(
                 normalized_form,
                 Some("That username is already taken.".to_string()),
                 StatusCode::UNPROCESSABLE_ENTITY,
+                csrf_token.0.clone(),
             );
         }
         Err(err) => return Err(err.into()),
@@ -204,7 +214,7 @@ async fn register(
 
     let session = state
         .sessions
-        .create(user.id, Utc::now() + Duration::days(30))
+        .create(Some(user.id), Utc::now() + Duration::days(30))
         .await?;
     let cookie_value =
         build_session_cookie(session.id, &state.session_secret, 30 * 24 * 60 * 60).map_err(AppError::from)?;
@@ -214,6 +224,7 @@ async fn register(
 
 async fn login(
     State(state): State<AppState>,
+    csrf_token: CsrfToken,
     Form(form): Form<LoginForm>,
 ) -> Result<Response, AppError> {
     let username = form.username.trim().to_lowercase();
@@ -228,6 +239,7 @@ async fn login(
             normalized_form,
             Some("Username and password are required.".to_string()),
             StatusCode::UNPROCESSABLE_ENTITY,
+            csrf_token.0.clone(),
         );
     }
 
@@ -247,6 +259,7 @@ async fn login(
             normalized_form,
             Some("Invalid username or password.".to_string()),
             StatusCode::UNPROCESSABLE_ENTITY,
+            csrf_token.0.clone(),
         );
     };
 
@@ -255,12 +268,13 @@ async fn login(
             normalized_form,
             Some("Invalid username or password.".to_string()),
             StatusCode::UNPROCESSABLE_ENTITY,
+            csrf_token.0.clone(),
         );
     }
 
     let session = state
         .sessions
-        .create(user.id, Utc::now() + Duration::days(30))
+        .create(Some(user.id), Utc::now() + Duration::days(30))
         .await?;
     let cookie_value =
         build_session_cookie(session.id, &state.session_secret, 30 * 24 * 60 * 60).map_err(AppError::from)?;
@@ -278,8 +292,10 @@ async fn logout(State(state): State<AppState>, headers: axum::http::HeaderMap) -
     Ok(([(SET_COOKIE, cookie_value)], Redirect::to("/")).into_response())
 }
 
-async fn root(_maybe_user: MaybeUser) -> Result<impl IntoResponse, AppError> {
-    render(HomeTemplate)
+async fn root(_maybe_user: MaybeUser, csrf_token: CsrfToken) -> Result<impl IntoResponse, AppError> {
+    render(HomeTemplate {
+        csrf_token: csrf_token.0,
+    })
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
@@ -302,24 +318,34 @@ fn init_tracing() {
         .init();
 }
 
-fn render_register(form: RegistrationForm, error_message: Option<String>) -> Result<Response, AppError> {
-    render_register_response(form, error_message, StatusCode::OK)
+fn render_register(
+    form: RegistrationForm,
+    error_message: Option<String>,
+    csrf_token: Option<String>,
+) -> Result<Response, AppError> {
+    render_register_response(form, error_message, StatusCode::OK, csrf_token)
 }
 
-fn render_login(form: LoginForm, error_message: Option<String>) -> Result<Response, AppError> {
-    render_login_response(form, error_message, StatusCode::OK)
+fn render_login(
+    form: LoginForm,
+    error_message: Option<String>,
+    csrf_token: Option<String>,
+) -> Result<Response, AppError> {
+    render_login_response(form, error_message, StatusCode::OK, csrf_token)
 }
 
 fn render_register_response(
     form: RegistrationForm,
     error_message: Option<String>,
     status: StatusCode,
+    csrf_token: Option<String>,
 ) -> Result<Response, AppError> {
     let html = render(RegisterTemplate {
         username: form.username,
         display_name: form.display_name,
         bio: form.bio,
         error_message,
+        csrf_token,
     })?;
 
     Ok((status, html).into_response())
@@ -329,10 +355,12 @@ fn render_login_response(
     form: LoginForm,
     error_message: Option<String>,
     status: StatusCode,
+    csrf_token: Option<String>,
 ) -> Result<Response, AppError> {
     let html = render(LoginTemplate {
         username: form.username,
         error_message,
+        csrf_token,
     })?;
 
     Ok((status, html).into_response())

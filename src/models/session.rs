@@ -7,7 +7,8 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Session {
     pub id: Uuid,
-    pub user_id: i64,
+    pub user_id: Option<i64>,
+    pub csrf_token: String,
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
 }

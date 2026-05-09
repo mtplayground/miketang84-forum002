@@ -17,6 +17,7 @@
           <a class="rounded-full border border-border px-4 py-2 text-slate-700 transition hover:border-accent hover:text-accent" href="/register">Register</a>
           <a class="rounded-full border border-border px-4 py-2 text-slate-700 transition hover:border-accent hover:text-accent" href="/login">Login</a>
           <form action="/logout" method="post">
+            {% include "_csrf_input.html" %}
             <button class="rounded-full border border-border px-4 py-2 text-slate-700 transition hover:border-accent hover:text-accent" type="submit">
               Logout
             </button>
