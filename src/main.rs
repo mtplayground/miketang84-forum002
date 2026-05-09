@@ -24,6 +24,7 @@ mod error;
 mod models;
 mod password;
 mod profile_store;
+mod search_store;
 mod session_store;
 mod templates;
 mod thread_store;
@@ -40,6 +41,7 @@ use models::category::Category;
 use models::user::{Role, User};
 use password::{hash_password, verify_password};
 use profile_store::ProfileStore;
+use search_store::SearchStore;
 use session_store::SessionStore;
 use templates::{
     render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, AdminUserRow,
@@ -47,7 +49,7 @@ use templates::{
     EditPostFormValues, EditPostTemplate, EditProfileContext, EditProfileFormValues,
     EditProfileTemplate, ErrorTemplate, HomeCategoryCard, HomeTemplate, LoginTemplate,
     NewThreadFormValues, NewThreadTemplate, ProfileHeader, ProfilePostRow, ProfileTemplate,
-    RegisterTemplate, ThreadHeader, ThreadPostRow, ThreadTemplate,
+    RegisterTemplate, SearchResultRow, SearchTemplate, ThreadHeader, ThreadPostRow, ThreadTemplate,
 };
 use thread_store::{CreateThreadInput, ThreadStore};
 
@@ -58,6 +60,7 @@ pub(crate) struct AppState {
     pub(crate) categories: CategoryStore,
     pub(crate) edit_window_minutes: u64,
     pub(crate) profiles: ProfileStore,
+    pub(crate) search: SearchStore,
     pub(crate) sessions: SessionStore,
     pub(crate) session_secret: String,
     pub(crate) threads: ThreadStore,
@@ -103,6 +106,12 @@ struct PageQuery {
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
+struct SearchQuery {
+    q: Option<String>,
+    page: Option<i64>,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
 struct NewThreadForm {
     title: String,
     body: String,
@@ -140,6 +149,7 @@ async fn main() -> Result<(), AppError> {
     db.run_migrations().await?;
     let categories = CategoryStore::new(db.pool());
     let profiles = ProfileStore::new(db.pool());
+    let search = SearchStore::new(db.pool());
     let sessions = SessionStore::new(db.pool());
     let threads = ThreadStore::new(db.pool());
 
@@ -149,6 +159,7 @@ async fn main() -> Result<(), AppError> {
         categories,
         edit_window_minutes: config.edit_window_minutes,
         profiles,
+        search,
         sessions,
         session_secret: config.session_secret.clone(),
         threads,
@@ -170,6 +181,7 @@ async fn main() -> Result<(), AppError> {
         .route("/t/:id/unpin", post(unpin_thread))
         .route("/t/:thread_key", get(thread_page))
         .route("/me/profile", get(edit_profile_form).post(update_profile))
+        .route("/search", get(search_page))
         .route("/u/:username", get(public_profile))
         .route("/admin/categories", get(admin_categories))
         .route("/admin/categories/create", post(create_category))
@@ -809,6 +821,52 @@ async fn public_profile(
     Ok(html.into_response())
 }
 
+async fn search_page(
+    State(state): State<AppState>,
+    Query(query): Query<SearchQuery>,
+    _maybe_user: MaybeUser,
+    csrf_token: CsrfToken,
+) -> Result<Response, AppError> {
+    let query_text = query.q.unwrap_or_default().trim().to_string();
+
+    if query_text.is_empty() {
+        let html = render(SearchTemplate {
+            query: String::new(),
+            results: Vec::new(),
+            total_results: 0,
+            current_page: 1,
+            total_pages: 1,
+            prev_page: None,
+            next_page: None,
+            csrf_token: csrf_token.0,
+        })?;
+
+        return Ok(html.into_response());
+    }
+
+    let results_page = state
+        .search
+        .search(&query_text, query.page.unwrap_or(1).max(1), 20)
+        .await?;
+    let html = render(SearchTemplate {
+        query: query_text,
+        results: results_page
+            .results
+            .into_iter()
+            .map(search_result_row)
+            .collect(),
+        total_results: results_page.total_results,
+        current_page: results_page.current_page,
+        total_pages: results_page.total_pages,
+        prev_page: (results_page.current_page > 1).then_some(results_page.current_page - 1),
+        next_page: (results_page.current_page < results_page.total_pages)
+            .then_some(results_page.current_page + 1),
+        csrf_token: csrf_token.0,
+    })?;
+
+    Ok(html.into_response())
+}
+
 async fn edit_profile_form(
     State(state): State<AppState>,
     user: RequireUser,
@@ -1205,6 +1263,23 @@ fn profile_post_row(post: profile_store::PublicProfilePost) -> ProfilePostRow {
         thread_title: post.thread_title,
         body: post.body,
         created_at: post.created_at,
+    }
+}
+
+fn search_result_row(result: search_store::SearchResultItem) -> SearchResultRow {
+    let target_url = match result.post_id {
+        Some(post_id) => format!("/t/{}-{}#post-{}", result.thread_id, result.thread_slug, post_id),
+        None => format!("/t/{}-{}", result.thread_id, result.thread_slug),
+    };
+
+    SearchResultRow {
+        result_kind: result.result_kind,
+        thread_id: result.thread_id,
+        thread_slug: result.thread_slug,
+        thread_title: result.thread_title,
+        target_url,
+        body: result.body,
+        created_at: result.created_at,
     }
 }
 

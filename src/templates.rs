@@ -130,6 +130,19 @@ pub struct ThreadTemplate {
     pub csrf_token: Option<String>,
 }
 
+#[derive(Template)]
+#[template(path = "search.html")]
+pub struct SearchTemplate {
+    pub query: String,
+    pub results: Vec<SearchResultRow>,
+    pub total_results: i64,
+    pub current_page: i64,
+    pub total_pages: i64,
+    pub prev_page: Option<i64>,
+    pub next_page: Option<i64>,
+    pub csrf_token: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct HomeCategoryCard {
     pub name: String,
@@ -223,6 +236,17 @@ pub struct ThreadPostRow {
     pub delete_action: Option<String>,
     pub mod_delete_action: Option<String>,
     pub is_deleted: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchResultRow {
+    pub result_kind: String,
+    pub thread_id: i64,
+    pub thread_slug: String,
+    pub thread_title: String,
+    pub target_url: String,
+    pub body: Option<String>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
