@@ -1,27 +1,23 @@
 use askama::Template;
-use axum::{
-    http::StatusCode,
-    response::{Html, IntoResponse, Response},
-};
-use tracing::error;
+use axum::response::Html;
 
-pub struct HtmlTemplate<T>(pub T);
+use crate::error::AppError;
 
-impl<T> IntoResponse for HtmlTemplate<T>
+pub fn render<T>(template: T) -> Result<Html<String>, AppError>
 where
     T: Template,
 {
-    fn into_response(self) -> Response {
-        match self.0.render() {
-            Ok(html) => Html(html).into_response(),
-            Err(err) => {
-                error!(error = %err, "failed to render template");
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
-            }
-        }
-    }
+    Ok(Html(template.render()?))
 }
 
 #[derive(Template)]
 #[template(path = "home.html")]
 pub struct HomeTemplate;
+
+#[derive(Template)]
+#[template(path = "error.html")]
+pub struct ErrorTemplate<'a> {
+    pub status_code: u16,
+    pub title: &'a str,
+    pub message: &'a str,
+}
