@@ -14,6 +14,7 @@ mod config;
 mod db;
 mod error;
 mod models;
+mod password;
 mod session_store;
 mod templates;
 
