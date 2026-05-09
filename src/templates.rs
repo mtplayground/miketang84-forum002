@@ -15,6 +15,15 @@ where
 pub struct HomeTemplate;
 
 #[derive(Template)]
+#[template(path = "register.html")]
+pub struct RegisterTemplate {
+    pub username: String,
+    pub display_name: String,
+    pub bio: String,
+    pub error_message: Option<String>,
+}
+
+#[derive(Template)]
 #[template(path = "error.html")]
 pub struct ErrorTemplate<'a> {
     pub status_code: u16,

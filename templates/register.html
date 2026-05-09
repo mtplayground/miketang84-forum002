@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}Register | miketang84-forum002{% endblock %}
+
+{% block flash_messages %}
+{% match error_message %}
+{% when Some with (message) %}
+<div class="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+  {{ message }}
+</div>
+{% when None %}
+<div class="rounded-2xl border border-dashed border-border bg-white/70 px-4 py-3 text-sm text-slate-600">
+  Create an account to start participating.
+</div>
+{% endmatch %}
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+  <div class="space-y-3">
+    <p class="text-sm font-semibold uppercase tracking-[0.3em] text-accent">Create account</p>
+    <h2 class="text-4xl font-semibold tracking-tight text-slate-900">Register</h2>
+    <p class="max-w-2xl text-lg leading-8 text-slate-600">
+      Choose a username, set a password, and we will sign you in immediately after registration.
+    </p>
+  </div>
+
+  <form class="grid gap-6" action="/register" method="post">
+    <label class="grid gap-2">
+      <span class="text-sm font-medium text-slate-700">Username</span>
+      <input
+        class="rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+        type="text"
+        name="username"
+        value="{{ username }}"
+        minlength="3"
+        maxlength="32"
+        required>
+    </label>
+
+    <label class="grid gap-2">
+      <span class="text-sm font-medium text-slate-700">Display name</span>
+      <input
+        class="rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+        type="text"
+        name="display_name"
+        value="{{ display_name }}"
+        maxlength="64">
+    </label>
+
+    <label class="grid gap-2">
+      <span class="text-sm font-medium text-slate-700">Bio</span>
+      <textarea
+        class="min-h-32 rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+        name="bio"
+        maxlength="280">{{ bio }}</textarea>
+    </label>
+
+    <label class="grid gap-2">
+      <span class="text-sm font-medium text-slate-700">Password</span>
+      <input
+        class="rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+        type="password"
+        name="password"
+        minlength="8"
+        required>
+    </label>
+
+    <div class="flex items-center justify-between gap-4">
+      <p class="text-sm text-slate-500">
+        Usernames accept lowercase letters, numbers, and underscores.
+      </p>
+      <button
+        class="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-teal-700"
+        type="submit">
+        Create account
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

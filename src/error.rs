@@ -6,7 +6,7 @@ use axum::{
 use thiserror::Error;
 use tracing::error;
 
-use crate::{config::ConfigError, templates::ErrorTemplate};
+use crate::{config::ConfigError, password::PasswordError, templates::ErrorTemplate};
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -18,6 +18,8 @@ pub enum AppError {
     Migration(#[from] sqlx::migrate::MigrateError),
     #[error("failed to render template")]
     Template(#[from] askama::Error),
+    #[error("failed to hash or verify a password")]
+    Password(#[from] PasswordError),
     #[error("request handling failed")]
     Io(#[from] std::io::Error),
 }
@@ -25,7 +27,7 @@ pub enum AppError {
 impl AppError {
     fn status_code(&self) -> StatusCode {
         match self {
-            Self::Template(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Template(_) | Self::Password(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Config(_) | Self::Database(_) | Self::Migration(_) | Self::Io(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
@@ -38,6 +40,7 @@ impl AppError {
             Self::Config(_) => "Configuration Error",
             Self::Database(_) => "Database Error",
             Self::Migration(_) => "Migration Error",
+            Self::Password(_) => "Password Error",
             Self::Io(_) => "Server Error",
         }
     }
@@ -48,6 +51,7 @@ impl AppError {
             Self::Config(_) => "The server configuration is invalid.",
             Self::Database(_) => "The database is currently unavailable.",
             Self::Migration(_) => "The database schema could not be prepared.",
+            Self::Password(_) => "The password could not be processed.",
             Self::Io(_) => "The server could not complete the request.",
         }
     }
