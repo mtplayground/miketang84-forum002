@@ -42,7 +42,8 @@ use session_store::SessionStore;
 use templates::{
     render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, CategoryHeader,
     CategoryTemplate, CategoryThreadRow, HomeCategoryCard, HomeTemplate, LoginTemplate,
-    NewThreadFormValues, NewThreadTemplate, RegisterTemplate,
+    NewThreadFormValues, NewThreadTemplate, RegisterTemplate, ThreadHeader, ThreadPostRow,
+    ThreadTemplate,
 };
 use thread_store::{CreateThreadInput, ThreadStore};
 
@@ -125,7 +126,9 @@ async fn main() -> Result<(), AppError> {
     let app = Router::new()
         .route("/", get(root))
         .route("/c/:slug", get(category_page))
+        .route("/c/:slug/t/:thread_key", get(legacy_thread_page))
         .route("/c/:slug/new", get(new_thread_form).post(create_thread))
+        .route("/t/:thread_key", get(thread_page))
         .route("/admin/categories", get(admin_categories))
         .route("/admin/categories/create", post(create_category))
         .route("/admin/categories/:id/update", post(update_category))
@@ -408,6 +411,76 @@ async fn new_thread_form(
     )
 }
 
+async fn thread_page(
+    State(state): State<AppState>,
+    Path(thread_key): Path<String>,
+    Query(query): Query<PageQuery>,
+    maybe_user: MaybeUser,
+    csrf_token: CsrfToken,
+) -> Result<Response, AppError> {
+    let Some(thread_id) = parse_thread_key(&thread_key) else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    let Some(thread) = state.threads.get_thread_detail(thread_id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    let canonical_path = thread_path(&thread.slug, thread.id);
+    if thread_key != format!("{}-{}", thread.id, thread.slug) {
+        return Ok(Redirect::to(&canonical_path).into_response());
+    }
+
+    let page = query.page.unwrap_or(1).max(1);
+    let posts_page = state.threads.list_posts_for_thread(thread.id, page, 20).await?;
+    let can_reply = maybe_user.0.is_some() && !thread.is_locked;
+    let html = render(ThreadTemplate {
+        thread: ThreadHeader {
+            id: thread.id,
+            title: thread.title,
+            slug: thread.slug,
+            category_name: thread.category_name,
+            category_slug: thread.category_slug,
+            author_username: thread.author_username,
+            created_at: thread.created_at,
+            last_activity_at: thread.last_activity_at,
+            is_pinned: thread.is_pinned,
+            is_locked: thread.is_locked,
+        },
+        posts: posts_page.posts.into_iter().map(thread_post_row).collect(),
+        total_posts: posts_page.total_posts,
+        current_page: posts_page.current_page,
+        total_pages: posts_page.total_pages,
+        prev_page: (posts_page.current_page > 1).then_some(posts_page.current_page - 1),
+        next_page: (posts_page.current_page < posts_page.total_pages)
+            .then_some(posts_page.current_page + 1),
+        can_reply,
+        reply_form_action: format!("/t/{}/reply", thread.id),
+        csrf_token: csrf_token.0,
+    })?;
+
+    Ok(html.into_response())
+}
+
+async fn legacy_thread_page(
+    State(state): State<AppState>,
+    Path((category_slug, thread_key)): Path<(String, String)>,
+) -> Result<Response, AppError> {
+    let Some(thread_id) = parse_thread_key(&thread_key) else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    let Some(thread) = state.threads.get_thread_detail(thread_id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    if thread.category_slug != category_slug {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+
+    Ok(Redirect::to(&thread_path(&thread.slug, thread.id)).into_response())
+}
+
 async fn create_thread(
     State(state): State<AppState>,
     Path(slug): Path<String>,
@@ -445,7 +518,7 @@ async fn create_thread(
         })
         .await?;
 
-    Ok(Redirect::to(&thread_path(&category.slug, thread.id, &thread.slug)).into_response())
+    Ok(Redirect::to(&thread_path(&thread.slug, thread.id)).into_response())
 }
 
 async fn admin_categories(
@@ -696,6 +769,7 @@ fn home_category_card(category: Category) -> HomeCategoryCard {
 
 fn category_thread_row(thread: thread_store::ThreadListItem) -> CategoryThreadRow {
     CategoryThreadRow {
+        id: thread.id,
         title: thread.title,
         slug: thread.slug,
         author_username: thread.author_username,
@@ -703,6 +777,16 @@ fn category_thread_row(thread: thread_store::ThreadListItem) -> CategoryThreadRo
         last_activity_at: thread.last_activity_at,
         is_pinned: thread.is_pinned,
         is_locked: thread.is_locked,
+    }
+}
+
+fn thread_post_row(post: thread_store::ThreadPostItem) -> ThreadPostRow {
+    ThreadPostRow {
+        id: post.id,
+        author_username: post.author_username,
+        body: post.body,
+        created_at: post.created_at,
+        updated_at: post.updated_at,
     }
 }
 
@@ -748,8 +832,13 @@ fn slugify(title: &str) -> String {
     }
 }
 
-fn thread_path(category_slug: &str, thread_id: i64, thread_slug: &str) -> String {
-    format!("/c/{category_slug}/t/{thread_id}-{thread_slug}")
+fn thread_path(thread_slug: &str, thread_id: i64) -> String {
+    format!("/t/{thread_id}-{thread_slug}")
+}
+
+fn parse_thread_key(thread_key: &str) -> Option<i64> {
+    let (id, _slug) = thread_key.split_once('-')?;
+    id.parse().ok()
 }
 
 fn render_new_thread(
