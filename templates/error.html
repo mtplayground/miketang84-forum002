@@ -3,15 +3,74 @@
 {% block title %}{{ status_code }} | {{ title }}{% endblock %}
 
 {% block flash_messages %}
-<div class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-  Something went wrong while handling this request.
+<div class="rounded-2xl border px-4 py-3 text-sm
+  {% if status_code == 404 %}
+    border-amber-200 bg-amber-50 text-amber-800
+  {% else if status_code == 403 || status_code == 410 %}
+    border-orange-200 bg-orange-50 text-orange-800
+  {% else %}
+    border-red-200 bg-red-50 text-red-700
+  {% endif %}">
+  {% if status_code == 404 %}
+    The requested page could not be found.
+  {% else if status_code == 403 %}
+    Access to this action was denied.
+  {% else if status_code == 410 %}
+    This content is no longer available.
+  {% else %}
+    Something went wrong while handling this request.
+  {% endif %}
 </div>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-4">
-  <p class="text-sm font-semibold uppercase tracking-[0.3em] text-red-700">Error {{ status_code }}</p>
-  <h2 class="text-4xl font-semibold tracking-tight text-slate-900">{{ title }}</h2>
-  <p class="max-w-2xl text-lg leading-8 text-slate-600">{{ message }}</p>
+<div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
+  <section class="space-y-5">
+    <p class="text-sm font-semibold uppercase tracking-[0.3em]
+      {% if status_code == 404 %}
+        text-amber-700
+      {% else if status_code == 403 || status_code == 410 %}
+        text-orange-700
+      {% else %}
+        text-red-700
+      {% endif %}">
+      Error {{ status_code }}
+    </p>
+    <h2 class="text-4xl font-semibold tracking-tight text-slate-900">{{ title }}</h2>
+    <p class="max-w-2xl text-lg leading-8 text-slate-600">{{ message }}</p>
+    <div class="flex flex-wrap gap-3 pt-2">
+      <a
+        href="/"
+        class="inline-flex items-center rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
+      >
+        Back to home
+      </a>
+      <a
+        href="/search"
+        class="inline-flex items-center rounded-full border border-slate-300 px-5 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
+      >
+        Search the forum
+      </a>
+    </div>
+  </section>
+
+  <aside class="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-sm shadow-slate-200/60">
+    <p class="text-sm font-semibold uppercase tracking-[0.3em] text-slate-500">What to try</p>
+    <ul class="mt-4 space-y-3 text-sm leading-6 text-slate-600">
+      {% if status_code == 404 %}
+      <li>Check the URL for mistakes or outdated links.</li>
+      <li>Return to the category list and browse from there.</li>
+      {% else if status_code == 403 %}
+      <li>Sign in with an account that has the required permissions.</li>
+      <li>Refresh the page if this action came from a form submission.</li>
+      {% else if status_code == 410 %}
+      <li>The content was removed from public view by moderation.</li>
+      <li>Browse related categories to continue the discussion.</li>
+      {% else %}
+      <li>Refresh the page and try the action again.</li>
+      <li>If the problem persists, return later once the server recovers.</li>
+      {% endif %}
+    </ul>
+  </aside>
 </div>
 {% endblock %}

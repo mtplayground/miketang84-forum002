@@ -36,7 +36,7 @@ use auth::{
 use category_store::{CategoryStore, CreateCategoryInput, UpdateCategoryInput};
 use config::Config;
 use db::Db;
-use error::AppError;
+use error::{render_error_page, AppError};
 use models::category::Category;
 use models::user::{Role, User};
 use password::{hash_password, verify_password};
@@ -47,7 +47,7 @@ use templates::{
     render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, AdminUserRow,
     AdminUsersTemplate, CategoryHeader, CategoryTemplate, CategoryThreadRow, EditPostContext,
     EditPostFormValues, EditPostTemplate, EditProfileContext, EditProfileFormValues,
-    EditProfileTemplate, ErrorTemplate, HomeCategoryCard, HomeTemplate, LoginTemplate,
+    EditProfileTemplate, HomeCategoryCard, HomeTemplate, LoginTemplate,
     NewThreadFormValues, NewThreadTemplate, ProfileHeader, ProfilePostRow, ProfileTemplate,
     RegisterTemplate, SearchResultRow, SearchTemplate, ThreadHeader, ThreadPostRow, ThreadTemplate,
 };
@@ -223,6 +223,7 @@ fn app_router(state: AppState) -> Router {
         .route("/logout", axum::routing::post(logout))
         .route("/health", get(health))
         .nest_service("/static", ServeDir::new("static"))
+        .fallback(not_found)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::csrf_verification_middleware,
@@ -239,6 +240,14 @@ fn app_router(state: AppState) -> Router {
                 .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
         )
         .with_state(state)
+}
+
+async fn not_found() -> Response {
+    render_error_page(
+        StatusCode::NOT_FOUND,
+        "Page Not Found",
+        "The page you requested does not exist or may have moved.",
+    )
 }
 
 async fn register_form(csrf_token: CsrfToken) -> Result<impl IntoResponse, AppError> {
@@ -438,7 +447,10 @@ async fn category_page(
     csrf_token: CsrfToken,
 ) -> Result<Response, AppError> {
     let Some(category) = state.categories.get_by_slug(&slug).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Category Not Found",
+            "That category could not be found.",
+        ));
     };
 
     let page = query.page.unwrap_or(1).max(1);
@@ -468,7 +480,10 @@ async fn new_thread_form(
     csrf_token: CsrfToken,
 ) -> Result<Response, AppError> {
     let Some(category) = state.categories.get_by_slug(&slug).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Category Not Found",
+            "That category could not be found.",
+        ));
     };
 
     render_new_thread(
@@ -488,11 +503,17 @@ async fn thread_page(
     csrf_token: CsrfToken,
 ) -> Result<Response, AppError> {
     let Some(thread_id) = parse_thread_key(&thread_key) else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Thread Not Found",
+            "That thread could not be found.",
+        ));
     };
 
     let Some(thread) = state.threads.get_thread_detail(thread_id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Thread Not Found",
+            "That thread could not be found.",
+        ));
     };
 
     let canonical_path = thread_path(&thread.slug, thread.id);
@@ -522,15 +543,24 @@ async fn legacy_thread_page(
     Path((category_slug, thread_key)): Path<(String, String)>,
 ) -> Result<Response, AppError> {
     let Some(thread_id) = parse_thread_key(&thread_key) else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Thread Not Found",
+            "That thread could not be found.",
+        ));
     };
 
     let Some(thread) = state.threads.get_thread_detail(thread_id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Thread Not Found",
+            "That thread could not be found.",
+        ));
     };
 
     if thread.category_slug != category_slug {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Thread Not Found",
+            "That thread could not be found in this category.",
+        ));
     }
 
     Ok(Redirect::to(&thread_path(&thread.slug, thread.id)).into_response())
@@ -544,7 +574,10 @@ async fn create_thread(
     Form(form): Form<NewThreadForm>,
 ) -> Result<Response, AppError> {
     let Some(category) = state.categories.get_by_slug(&slug).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Category Not Found",
+            "That category could not be found.",
+        ));
     };
 
     let normalized_form = normalize_new_thread_form(form);
@@ -584,7 +617,10 @@ async fn reply_to_thread(
     Form(form): Form<ReplyForm>,
 ) -> Result<Response, AppError> {
     let Some(thread) = state.threads.get_thread_detail(id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Thread Not Found",
+            "That thread could not be found.",
+        ));
     };
 
     if thread.deleted_at.is_some() {
@@ -675,11 +711,17 @@ async fn moderator_delete_thread(
     _moderator: RequireModerator,
 ) -> Result<Response, AppError> {
     let Some(thread) = state.threads.get_thread_detail(id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Thread Not Found",
+            "That thread could not be found.",
+        ));
     };
 
     if !state.threads.soft_delete_thread(id).await? {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Thread Not Found",
+            "That thread could not be found.",
+        ));
     }
 
     Ok(Redirect::to(&thread_path(&thread.slug, thread.id)).into_response())
@@ -692,11 +734,17 @@ async fn edit_post_form(
     csrf_token: CsrfToken,
 ) -> Result<Response, AppError> {
     let Some(post) = state.threads.get_post_detail(id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Post Not Found",
+            "That post could not be found.",
+        ));
     };
 
     if !can_edit_post(&post, user.0.user.id, state.edit_window_minutes) {
-        return Ok(StatusCode::FORBIDDEN.into_response());
+        return Err(AppError::forbidden(
+            "Editing Unavailable",
+            "You can only edit your own posts during the active edit window.",
+        ));
     }
 
     render_edit_post(
@@ -718,11 +766,17 @@ async fn update_post(
     Form(form): Form<EditPostForm>,
 ) -> Result<Response, AppError> {
     let Some(post) = state.threads.get_post_detail(id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Post Not Found",
+            "That post could not be found.",
+        ));
     };
 
     if !can_edit_post(&post, user.0.user.id, state.edit_window_minutes) {
-        return Ok(StatusCode::FORBIDDEN.into_response());
+        return Err(AppError::forbidden(
+            "Editing Unavailable",
+            "You can only edit your own posts during the active edit window.",
+        ));
     }
 
     let body = form.body.trim().to_string();
@@ -737,7 +791,10 @@ async fn update_post(
     }
 
     if !state.threads.update_post_body(id, &body).await? {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Post Not Found",
+            "That post could not be found.",
+        ));
     }
 
     let page = state.threads.page_for_post(id, 20).await?.unwrap_or(1);
@@ -755,15 +812,24 @@ async fn delete_post(
     user: RequireUser,
 ) -> Result<Response, AppError> {
     let Some(post) = state.threads.get_post_detail(id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Post Not Found",
+            "That post could not be found.",
+        ));
     };
 
     if !can_edit_post(&post, user.0.user.id, state.edit_window_minutes) {
-        return Ok(StatusCode::FORBIDDEN.into_response());
+        return Err(AppError::forbidden(
+            "Deletion Unavailable",
+            "You can only delete your own posts during the active edit window.",
+        ));
     }
 
     if !state.threads.soft_delete_post(id).await? {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Post Not Found",
+            "That post could not be found.",
+        ));
     }
 
     let page = state.threads.page_for_post(id, 20).await?.unwrap_or(1);
@@ -781,7 +847,10 @@ async fn moderator_delete_post(
     moderator: RequireModerator,
 ) -> Result<Response, AppError> {
     let Some(post) = state.threads.get_post_detail(id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Post Not Found",
+            "That post could not be found.",
+        ));
     };
 
     if !state
@@ -789,7 +858,10 @@ async fn moderator_delete_post(
         .moderator_soft_delete_post(id, moderator.0.user.id)
         .await?
     {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Post Not Found",
+            "That post could not be found.",
+        ));
     }
 
     let page = state.threads.page_for_post(id, 20).await?.unwrap_or(1);
@@ -809,7 +881,10 @@ async fn public_profile(
 ) -> Result<Response, AppError> {
     let username = username.trim().to_lowercase();
     let Some(profile) = state.profiles.get_public_profile(&username).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Profile Not Found",
+            "That user profile could not be found.",
+        ));
     };
     let recent_posts = state.profiles.recent_posts(profile.id, 10).await?;
     let can_edit = maybe_user
@@ -886,7 +961,10 @@ async fn edit_profile_form(
     csrf_token: CsrfToken,
 ) -> Result<Response, AppError> {
     let Some(profile) = state.profiles.get_editable_profile(user.0.user.id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Profile Not Found",
+            "Your profile could not be found.",
+        ));
     };
 
     render_edit_profile(
@@ -908,7 +986,10 @@ async fn update_profile(
     Form(form): Form<EditProfileForm>,
 ) -> Result<Response, AppError> {
     let Some(profile) = state.profiles.get_editable_profile(user.0.user.id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Profile Not Found",
+            "Your profile could not be found.",
+        ));
     };
 
     let normalized_form = normalize_edit_profile_form(form);
@@ -931,7 +1012,10 @@ async fn update_profile(
         )
         .await?
     {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Profile Not Found",
+            "Your profile could not be found.",
+        ));
     }
 
     Ok(Redirect::to(&format!("/u/{}", profile.username)).into_response())
@@ -1023,7 +1107,10 @@ async fn update_category(
 
     match state.categories.update(id, &input).await {
         Ok(Some(_)) => Ok(Redirect::to("/admin/categories").into_response()),
-        Ok(None) => Ok(StatusCode::NOT_FOUND.into_response()),
+        Ok(None) => Err(AppError::not_found(
+            "Category Not Found",
+            "That category could not be found.",
+        )),
         Err(sqlx::Error::Database(db_error)) if db_error.constraint() == Some("categories_slug_key") => {
             render_admin_categories(
                 &state,
@@ -1048,7 +1135,10 @@ async fn delete_category(
     if deleted {
         Ok(Redirect::to("/admin/categories").into_response())
     } else {
-        Ok(StatusCode::NOT_FOUND.into_response())
+        Err(AppError::not_found(
+            "Category Not Found",
+            "That category could not be found.",
+        ))
     }
 }
 
@@ -1072,7 +1162,10 @@ async fn reorder_category(
 
     match state.categories.update_position(id, form.position).await? {
         Some(_) => Ok(Redirect::to("/admin/categories").into_response()),
-        None => Ok(StatusCode::NOT_FOUND.into_response()),
+        None => Err(AppError::not_found(
+            "Category Not Found",
+            "That category could not be found.",
+        )),
     }
 }
 
@@ -1144,7 +1237,10 @@ async fn update_user_role(
     if updated {
         Ok(Redirect::to("/admin/users").into_response())
     } else {
-        Ok(StatusCode::NOT_FOUND.into_response())
+        Err(AppError::not_found(
+            "User Not Found",
+            "That user account could not be found.",
+        ))
     }
 }
 
@@ -1484,14 +1580,11 @@ fn render_removed_thread(
     csrf_token: Option<String>,
     status: StatusCode,
 ) -> Result<Response, AppError> {
-    let html = render(ErrorTemplate {
-        status_code: status.as_u16(),
-        title: "Thread Removed",
-        message: "This thread has been removed from public view.",
-        csrf_token,
-    })?;
-
-    Ok((status, html).into_response())
+    let _ = (csrf_token, status);
+    Err(AppError::gone(
+        "Thread Removed",
+        "This thread has been removed from public view.",
+    ))
 }
 
 async fn toggle_thread_lock(
@@ -1500,11 +1593,17 @@ async fn toggle_thread_lock(
     is_locked: bool,
 ) -> Result<Response, AppError> {
     let Some(thread) = state.threads.get_thread_detail(thread_id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Thread Not Found",
+            "That thread could not be found.",
+        ));
     };
 
     if !state.threads.set_locked(thread_id, is_locked).await? {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Thread Not Found",
+            "That thread could not be found.",
+        ));
     }
 
     Ok(Redirect::to(&thread_path(&thread.slug, thread.id)).into_response())
@@ -1516,11 +1615,17 @@ async fn toggle_thread_pin(
     is_pinned: bool,
 ) -> Result<Response, AppError> {
     let Some(thread) = state.threads.get_thread_detail(thread_id).await? else {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Thread Not Found",
+            "That thread could not be found.",
+        ));
     };
 
     if !state.threads.set_pinned(thread_id, is_pinned).await? {
-        return Ok(StatusCode::NOT_FOUND.into_response());
+        return Err(AppError::not_found(
+            "Thread Not Found",
+            "That thread could not be found.",
+        ));
     }
 
     Ok(Redirect::to(&thread_path(&thread.slug, thread.id)).into_response())
