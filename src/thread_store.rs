@@ -46,6 +46,19 @@ pub struct ThreadPostItem {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct PostDetail {
+    pub id: i64,
+    pub thread_id: i64,
+    pub author_id: i64,
+    pub author_username: String,
+    pub body: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub thread_title: String,
+    pub thread_slug: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ThreadListPage {
     pub threads: Vec<ThreadListItem>,
@@ -338,5 +351,69 @@ impl ThreadStore {
             post_id,
             total_posts,
         })
+    }
+
+    pub async fn get_post_detail(&self, post_id: i64) -> Result<Option<PostDetail>, sqlx::Error> {
+        sqlx::query_as::<_, PostDetail>(
+            r#"
+            SELECT
+                p.id,
+                p.thread_id,
+                p.author_id,
+                u.username AS author_username,
+                p.body,
+                p.created_at,
+                p.updated_at,
+                t.title AS thread_title,
+                t.slug AS thread_slug
+            FROM posts p
+            INNER JOIN users u ON u.id = p.author_id
+            INNER JOIN threads t ON t.id = p.thread_id
+            WHERE p.id = $1
+              AND p.deleted_at IS NULL
+            "#,
+        )
+        .bind(post_id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    pub async fn update_post_body(&self, post_id: i64, body: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE posts
+            SET body = $2,
+                updated_at = NOW()
+            WHERE id = $1
+              AND deleted_at IS NULL
+            "#,
+        )
+        .bind(post_id)
+        .bind(body)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn page_for_post(&self, post_id: i64, per_page: i64) -> Result<Option<i64>, sqlx::Error> {
+        sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT ((COUNT(*) - 1) / $2) + 1
+            FROM posts target
+            INNER JOIN posts p ON p.thread_id = target.thread_id
+            WHERE target.id = $1
+              AND target.deleted_at IS NULL
+              AND p.deleted_at IS NULL
+              AND (
+                  p.created_at < target.created_at
+                  OR (p.created_at = target.created_at AND p.id <= target.id)
+              )
+            "#,
+        )
+        .bind(post_id)
+        .bind(per_page)
+        .fetch_optional(&self.pool)
+        .await
     }
 }
