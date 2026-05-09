@@ -12,9 +12,13 @@ pub struct Db {
 
 impl Db {
     pub async fn connect(config: &Config) -> Result<Self, sqlx::Error> {
+        Self::connect_with_url(&config.database_url).await
+    }
+
+    pub async fn connect_with_url(database_url: &str) -> Result<Self, sqlx::Error> {
         let pool = PgPoolOptions::new()
             .max_connections(5)
-            .connect(&config.database_url)
+            .connect(database_url)
             .await?;
 
         Ok(Self { pool })

@@ -29,8 +29,32 @@ Environment variables:
 - `SESSION_SECRET`: secret used for session signing/encryption
 - `EDIT_WINDOW_MINUTES`: post edit window length in minutes
 - `RUST_LOG`: tracing filter, optional
+- `SEED_ADMIN_USERNAME`: admin username used by `cargo run --bin seed`
+- `SEED_ADMIN_PASSWORD`: admin password used by `cargo run --bin seed`
+- `SEED_ADMIN_DISPLAY_NAME`: optional display name for the seeded admin user
+- `SEED_ADMIN_BIO`: optional bio for the seeded admin user
 
 Copy [`.env.example`](/workspace/.env.example) to `.env` for local development if preferred.
+
+## Seed sample data
+
+To bootstrap a local or fresh database with an admin account, starter categories, and sample threads:
+
+```bash
+export DATABASE_URL=$(cat /workspace/.database_url)
+export SEED_ADMIN_USERNAME=admin
+export SEED_ADMIN_PASSWORD=change-me-now
+cargo run --bin seed
+```
+
+The seed binary will:
+
+- run pending migrations
+- upsert the admin account and force its role to `admin`
+- create or update the starter categories
+- create sample threads and one sample reply per thread if they do not already exist
+
+`SEED_ADMIN_DISPLAY_NAME` and `SEED_ADMIN_BIO` are optional; defaults are used when omitted.
 
 ## Run with Docker Compose
 
