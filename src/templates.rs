@@ -111,6 +111,7 @@ pub struct ThreadTemplate {
     pub prev_page: Option<i64>,
     pub next_page: Option<i64>,
     pub can_reply: bool,
+    pub can_moderate: bool,
     pub reply_form_action: String,
     pub reply_error_message: Option<String>,
     pub reply_body: String,

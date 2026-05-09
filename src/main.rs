@@ -30,7 +30,7 @@ mod thread_store;
 
 use auth::{
     build_session_cookie, clear_session_cookie, signed_session_id_from_headers, CsrfToken, MaybeUser,
-    RequireAdmin, RequireUser,
+    RequireAdmin, RequireModerator, RequireUser,
 };
 use category_store::{CategoryStore, CreateCategoryInput, UpdateCategoryInput};
 use config::Config;
@@ -155,7 +155,9 @@ async fn main() -> Result<(), AppError> {
         .route("/c/:slug/new", get(new_thread_form).post(create_thread))
         .route("/p/:id/delete", post(delete_post))
         .route("/p/:id/edit", get(edit_post_form).post(update_post))
+        .route("/t/:id/lock", post(lock_thread))
         .route("/t/:id/reply", post(reply_to_thread))
+        .route("/t/:id/unlock", post(unlock_thread))
         .route("/t/:thread_key", get(thread_page))
         .route("/me/profile", get(edit_profile_form).post(update_profile))
         .route("/u/:username", get(public_profile))
@@ -465,7 +467,7 @@ async fn thread_page(
         &state,
         thread,
         query.page.unwrap_or(1).max(1),
-        maybe_user.0.as_ref().map(|user| user.user.id),
+        maybe_user.0,
         None,
         String::new(),
         csrf_token.0,
@@ -552,7 +554,7 @@ async fn reply_to_thread(
             &state,
             thread,
             reply_page,
-            Some(user.0.user.id),
+            Some(user.0.clone()),
             Some("This thread is locked. New replies are disabled.".to_string()),
             body,
             csrf_token.0,
@@ -566,7 +568,7 @@ async fn reply_to_thread(
             &state,
             thread,
             reply_page,
-            Some(user.0.user.id),
+            Some(user.0.clone()),
             Some("Reply body is required.".to_string()),
             body,
             csrf_token.0,
@@ -588,6 +590,22 @@ async fn reply_to_thread(
     );
 
     Ok(Redirect::to(&redirect_target).into_response())
+}
+
+async fn lock_thread(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    _moderator: RequireModerator,
+) -> Result<Response, AppError> {
+    toggle_thread_lock(&state, id, true).await
+}
+
+async fn unlock_thread(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    _moderator: RequireModerator,
+) -> Result<Response, AppError> {
+    toggle_thread_lock(&state, id, false).await
 }
 
 async fn edit_post_form(
@@ -1218,11 +1236,27 @@ fn render_edit_profile(
     Ok((status, html).into_response())
 }
 
+async fn toggle_thread_lock(
+    state: &AppState,
+    thread_id: i64,
+    is_locked: bool,
+) -> Result<Response, AppError> {
+    let Some(thread) = state.threads.get_thread_detail(thread_id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    if !state.threads.set_locked(thread_id, is_locked).await? {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+
+    Ok(Redirect::to(&thread_path(&thread.slug, thread.id)).into_response())
+}
+
 async fn render_thread_page(
     state: &AppState,
     thread: thread_store::ThreadDetail,
     requested_page: i64,
-    current_user_id: Option<i64>,
+    current_user: Option<auth::CurrentUser>,
     reply_error_message: Option<String>,
     reply_body: String,
     csrf_token: Option<String>,
@@ -1232,6 +1266,11 @@ async fn render_thread_page(
         .threads
         .list_posts_for_thread(thread.id, requested_page, 20)
         .await?;
+    let current_user_id = current_user.as_ref().map(|user| user.user.id);
+    let can_moderate = current_user
+        .as_ref()
+        .map(|user| matches!(user.user.role, crate::models::user::Role::Moderator | crate::models::user::Role::Admin))
+        .unwrap_or(false);
     let can_reply = current_user_id.is_some() && !thread.is_locked;
     let html = render(ThreadTemplate {
         thread: ThreadHeader {
@@ -1258,6 +1297,7 @@ async fn render_thread_page(
         next_page: (posts_page.current_page < posts_page.total_pages)
             .then_some(posts_page.current_page + 1),
         can_reply,
+        can_moderate,
         reply_form_action: format!("/t/{}/reply", thread.id),
         reply_error_message,
         reply_body,
