@@ -1,0 +1,8 @@
+.git
+.gitignore
+target
+.gh_token
+.database_url
+.env.production
+.claude
+node_modules
