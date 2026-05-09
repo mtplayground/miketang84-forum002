@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  }
+}
+
+@layer components {
+  .shell {
+    @apply mx-auto max-w-5xl px-6;
+  }
+}
