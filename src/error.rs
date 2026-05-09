@@ -10,6 +10,21 @@ use crate::{config::ConfigError, password::PasswordError, templates::ErrorTempla
 
 #[derive(Debug, Error)]
 pub enum AppError {
+    #[error("requested resource was not found")]
+    NotFound {
+        title: &'static str,
+        message: &'static str,
+    },
+    #[error("request was forbidden")]
+    Forbidden {
+        title: &'static str,
+        message: &'static str,
+    },
+    #[error("requested resource is no longer available")]
+    Gone {
+        title: &'static str,
+        message: &'static str,
+    },
     #[error("failed to load application configuration")]
     Config(#[from] ConfigError),
     #[error("failed to connect to the database")]
@@ -25,8 +40,23 @@ pub enum AppError {
 }
 
 impl AppError {
+    pub fn not_found(title: &'static str, message: &'static str) -> Self {
+        Self::NotFound { title, message }
+    }
+
+    pub fn forbidden(title: &'static str, message: &'static str) -> Self {
+        Self::Forbidden { title, message }
+    }
+
+    pub fn gone(title: &'static str, message: &'static str) -> Self {
+        Self::Gone { title, message }
+    }
+
     fn status_code(&self) -> StatusCode {
         match self {
+            Self::NotFound { .. } => StatusCode::NOT_FOUND,
+            Self::Forbidden { .. } => StatusCode::FORBIDDEN,
+            Self::Gone { .. } => StatusCode::GONE,
             Self::Template(_) | Self::Password(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Config(_) | Self::Database(_) | Self::Migration(_) | Self::Io(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -36,6 +66,9 @@ impl AppError {
 
     fn title(&self) -> &'static str {
         match self {
+            Self::NotFound { title, .. } => title,
+            Self::Forbidden { title, .. } => title,
+            Self::Gone { title, .. } => title,
             Self::Template(_) => "Template Error",
             Self::Config(_) => "Configuration Error",
             Self::Database(_) => "Database Error",
@@ -47,6 +80,9 @@ impl AppError {
 
     fn user_message(&self) -> &'static str {
         match self {
+            Self::NotFound { message, .. } => message,
+            Self::Forbidden { message, .. } => message,
+            Self::Gone { message, .. } => message,
             Self::Template(_) => "The page could not be rendered.",
             Self::Config(_) => "The server configuration is invalid.",
             Self::Database(_) => "The database is currently unavailable.",
@@ -57,24 +93,27 @@ impl AppError {
     }
 }
 
+pub fn render_error_page(status: StatusCode, title: &str, message: &str) -> Response {
+    let template = ErrorTemplate {
+        status_code: status.as_u16(),
+        title,
+        message,
+        csrf_token: None,
+    };
+
+    match template.render() {
+        Ok(html) => (status, Html(html)).into_response(),
+        Err(render_err) => {
+            error!(error = %render_err, "failed to render error template");
+            (status, message.to_string()).into_response()
+        }
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.status_code();
         error!(error = %self, "request failed");
-
-        let template = ErrorTemplate {
-            status_code: status.as_u16(),
-            title: self.title(),
-            message: self.user_message(),
-            csrf_token: None,
-        };
-
-        match template.render() {
-            Ok(html) => (status, Html(html)).into_response(),
-            Err(render_err) => {
-                error!(error = %render_err, "failed to render error template");
-                (status, self.to_string()).into_response()
-            }
-        }
+        render_error_page(status, self.title(), self.user_message())
     }
 }

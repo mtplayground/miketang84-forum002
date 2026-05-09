@@ -1,4 +1,3 @@
-use askama::Template;
 use axum::{
     body::{to_bytes, Body},
     extract::{FromRequestParts, State},
@@ -18,7 +17,7 @@ use sha2::Sha256;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::{models::user::User, templates::ErrorTemplate, AppState};
+use crate::{error::render_error_page, models::user::User, AppState};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -213,7 +212,10 @@ where
         {
             Ok(Self(user))
         } else {
-            Err(StatusCode::FORBIDDEN.into_response())
+            Err(forbidden_response(
+                "Moderator Access Required",
+                "You do not have permission to perform moderator actions.",
+            ))
         }
     }
 }
@@ -231,7 +233,10 @@ where
         if matches!(user.user.role, crate::models::user::Role::Admin) {
             Ok(Self(user))
         } else {
-            Err(StatusCode::FORBIDDEN.into_response())
+            Err(forbidden_response(
+                "Administrator Access Required",
+                "You do not have permission to manage administrative settings.",
+            ))
         }
     }
 }
@@ -407,30 +412,19 @@ where
 }
 
 fn render_error_response(status: StatusCode, title: &'static str, message: &'static str) -> Response {
-    let template = ErrorTemplate {
-        status_code: status.as_u16(),
-        title,
-        message,
-        csrf_token: None,
-    };
-
-    match template.render() {
-        Ok(html) => (status, axum::response::Html(html)).into_response(),
-        Err(err) => {
-            warn!(error = %err, "failed to render middleware error template");
-            (status, message).into_response()
-        }
-    }
+    render_error_page(status, title, message)
 }
 
 #[cfg(test)]
 mod tests {
-    use axum::{extract::Extension, http::Request, routing::get, Router};
+    use axum::{body::to_bytes, extract::Extension, http::Request, routing::get, Router};
     use chrono::Utc;
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    use super::{CurrentUser, MaybeUser, RequireAdmin, RequireModerator, RequireUser};
+    use super::{
+        render_error_response, CurrentUser, MaybeUser, RequireAdmin, RequireModerator, RequireUser,
+    };
     use crate::models::user::{Role, User};
 
     #[tokio::test]
@@ -545,6 +539,22 @@ mod tests {
             .expect("request should succeed");
 
         assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn friendly_forbidden_page_renders_error_details() {
+        let response = render_error_response(
+            axum::http::StatusCode::FORBIDDEN,
+            "CSRF Verification Failed",
+            "The request token was missing or invalid. Refresh the page and try again.",
+        );
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should be readable");
+        let html = String::from_utf8(body.to_vec()).expect("response body should be valid utf-8");
+
+        assert!(html.contains("CSRF Verification Failed"));
+        assert!(html.contains("Refresh the page and try again."));
     }
 
     fn test_user(role: Role) -> CurrentUser {
