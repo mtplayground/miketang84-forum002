@@ -51,6 +51,18 @@ pub struct AdminCategoriesTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "admin_users.html")]
+pub struct AdminUsersTemplate {
+    pub users: Vec<AdminUserRow>,
+    pub error_message: Option<String>,
+    pub current_page: i64,
+    pub total_pages: i64,
+    pub prev_page: Option<i64>,
+    pub next_page: Option<i64>,
+    pub csrf_token: Option<String>,
+}
+
+#[derive(Template)]
 #[template(path = "category.html")]
 pub struct CategoryTemplate {
     pub category: CategoryHeader,
@@ -149,6 +161,16 @@ pub struct AdminCategoryFormValues {
     pub slug: String,
     pub description: String,
     pub position: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdminUserRow {
+    pub id: i64,
+    pub username: String,
+    pub display_name: String,
+    pub role: String,
+    pub created_at: DateTime<Utc>,
+    pub is_self: bool,
 }
 
 #[derive(Debug, Clone)]

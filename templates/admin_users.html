@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Users | miketang84-forum002{% endblock %}
+
+{% block flash_messages %}
+{% match error_message %}
+{% when Some with (message) %}
+<div class="rounded-2xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+  {{ message }}
+</div>
+{% when None %}
+<div class="rounded-2xl border border-dashed border-border bg-white/70 px-4 py-3 text-sm text-slate-600">
+  Assign user roles here. You cannot demote your own admin account.
+</div>
+{% endmatch %}
+{% endblock %}
+
+{% block content %}
+<div class="space-y-10">
+  <div class="space-y-3">
+    <p class="text-sm font-semibold uppercase tracking-[0.3em] text-accent">Administration</p>
+    <h2 class="text-4xl font-semibold tracking-tight text-slate-900">User management</h2>
+    <p class="max-w-3xl text-lg leading-8 text-slate-600">
+      Review forum members, inspect their current role, and update permissions without leaving the page.
+    </p>
+  </div>
+
+  {% if users.is_empty() %}
+  <div class="rounded-[1.75rem] border border-dashed border-border bg-slate-50 px-6 py-8 text-slate-600">
+    No users found.
+  </div>
+  {% else %}
+  <div class="grid gap-6">
+    {% for user in users %}
+    <article class="grid gap-5 rounded-[1.75rem] border border-border bg-slate-50/80 p-6 shadow-sm">
+      <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p class="text-sm font-semibold uppercase tracking-[0.2em] text-accent">User #{{ user.id }}</p>
+          <h3 class="mt-1 text-2xl font-semibold tracking-tight text-slate-900">{{ user.display_name }}</h3>
+          <p class="mt-1 text-sm text-slate-500">@{{ user.username }} joined {{ user.created_at }}</p>
+        </div>
+        {% if user.is_self %}
+        <span class="rounded-full bg-accentSoft px-4 py-2 text-sm font-medium text-accent">Current admin</span>
+        {% endif %}
+      </div>
+
+      <form class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between" action="/admin/users/{{ user.id }}/role" method="post">
+        {% include "_csrf_input.html" %}
+        <label class="grid gap-2 md:min-w-56">
+          <span class="text-sm font-medium text-slate-700">Role</span>
+          <select
+            class="rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+            name="role">
+            <option value="user"{% if user.role == "user" %} selected{% endif %}>User</option>
+            <option value="moderator"{% if user.role == "moderator" %} selected{% endif %}>Moderator</option>
+            <option value="admin"{% if user.role == "admin" %} selected{% endif %}>Admin</option>
+          </select>
+        </label>
+
+        <div class="flex items-center justify-between gap-4 md:flex-1">
+          <p class="text-sm text-slate-500">
+            {% if user.is_self %}
+            Your account must remain an admin.
+            {% else %}
+            Update the role to change moderation and administrative access.
+            {% endif %}
+          </p>
+          <button
+            class="rounded-full bg-slate-900 px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+            type="submit">
+            Save role
+          </button>
+        </div>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if total_pages > 1 %}
+  <nav aria-label="Pagination" class="flex items-center justify-between gap-4 rounded-[1.75rem] border border-border bg-slate-50/80 px-6 py-4">
+    <div class="text-sm text-slate-500">Page {{ current_page }} of {{ total_pages }}</div>
+    <div class="flex items-center gap-3 text-sm font-medium">
+      {% match prev_page %}
+      {% when Some with (page) %}
+      <a class="rounded-full border border-border px-4 py-2 text-slate-700 transition hover:border-accent hover:text-accent" href="/admin/users?page={{ page }}">Previous</a>
+      {% when None %}
+      <span class="rounded-full border border-border px-4 py-2 text-slate-300">Previous</span>
+      {% endmatch %}
+      {% match next_page %}
+      {% when Some with (page) %}
+      <a class="rounded-full border border-border px-4 py-2 text-slate-700 transition hover:border-accent hover:text-accent" href="/admin/users?page={{ page }}">Next</a>
+      {% when None %}
+      <span class="rounded-full border border-border px-4 py-2 text-slate-300">Next</span>
+      {% endmatch %}
+    </div>
+  </nav>
+  {% endif %}
+</div>
+{% endblock %}

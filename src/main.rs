@@ -37,16 +37,17 @@ use config::Config;
 use db::Db;
 use error::AppError;
 use models::category::Category;
-use models::user::User;
+use models::user::{Role, User};
 use password::{hash_password, verify_password};
 use profile_store::ProfileStore;
 use session_store::SessionStore;
 use templates::{
-    render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, CategoryHeader,
-    CategoryTemplate, CategoryThreadRow, EditPostContext, EditPostFormValues, EditPostTemplate,
-    EditProfileContext, EditProfileFormValues, EditProfileTemplate, ErrorTemplate, HomeCategoryCard,
-    HomeTemplate, LoginTemplate, NewThreadFormValues, NewThreadTemplate, ProfileHeader,
-    ProfilePostRow, ProfileTemplate, RegisterTemplate, ThreadHeader, ThreadPostRow, ThreadTemplate,
+    render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, AdminUserRow,
+    AdminUsersTemplate, CategoryHeader, CategoryTemplate, CategoryThreadRow, EditPostContext,
+    EditPostFormValues, EditPostTemplate, EditProfileContext, EditProfileFormValues,
+    EditProfileTemplate, ErrorTemplate, HomeCategoryCard, HomeTemplate, LoginTemplate,
+    NewThreadFormValues, NewThreadTemplate, ProfileHeader, ProfilePostRow, ProfileTemplate,
+    RegisterTemplate, ThreadHeader, ThreadPostRow, ThreadTemplate,
 };
 use thread_store::{CreateThreadInput, ThreadStore};
 
@@ -124,6 +125,11 @@ struct EditProfileForm {
     bio: String,
 }
 
+#[derive(Debug, Default, Clone, Deserialize)]
+struct UpdateUserRoleForm {
+    role: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     init_tracing();
@@ -170,6 +176,8 @@ async fn main() -> Result<(), AppError> {
         .route("/admin/categories/:id/update", post(update_category))
         .route("/admin/categories/:id/delete", post(delete_category))
         .route("/admin/categories/:id/reorder", post(reorder_category))
+        .route("/admin/users", get(admin_users))
+        .route("/admin/users/:id/role", post(update_user_role))
         .route("/register", get(register_form).post(register))
         .route("/login", get(login_form).post(login))
         .route("/logout", axum::routing::post(logout))
@@ -997,6 +1005,78 @@ async fn reorder_category(
     }
 }
 
+async fn admin_users(
+    State(state): State<AppState>,
+    admin: RequireAdmin,
+    Query(query): Query<PageQuery>,
+    csrf_token: CsrfToken,
+) -> Result<Response, AppError> {
+    render_admin_users(
+        &state,
+        admin.0.user.id,
+        query.page.unwrap_or(1).max(1),
+        None,
+        csrf_token.0,
+        StatusCode::OK,
+    )
+    .await
+}
+
+async fn update_user_role(
+    State(state): State<AppState>,
+    admin: RequireAdmin,
+    csrf_token: CsrfToken,
+    Path(id): Path<i64>,
+    Form(form): Form<UpdateUserRoleForm>,
+) -> Result<Response, AppError> {
+    let role = match parse_role(&form.role) {
+        Some(role) => role,
+        None => {
+            return render_admin_users(
+                &state,
+                admin.0.user.id,
+                1,
+                Some("Invalid role selection.".to_string()),
+                csrf_token.0,
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await
+        }
+    };
+
+    if admin.0.user.id == id && role != Role::Admin {
+        return render_admin_users(
+            &state,
+            admin.0.user.id,
+            1,
+            Some("You cannot demote your own admin account.".to_string()),
+            csrf_token.0,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+
+    let updated = sqlx::query(
+        r#"
+        UPDATE users
+        SET role = $2
+        WHERE id = $1
+        "#,
+    )
+    .bind(id)
+    .bind(role)
+    .execute(state.db.pool())
+    .await?
+    .rows_affected()
+        > 0;
+
+    if updated {
+        Ok(Redirect::to("/admin/users").into_response())
+    } else {
+        Ok(StatusCode::NOT_FOUND.into_response())
+    }
+}
+
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let payload = HealthResponse {
         status: "ok",
@@ -1437,6 +1517,62 @@ async fn render_admin_categories(
     Ok((status, html).into_response())
 }
 
+async fn render_admin_users(
+    state: &AppState,
+    current_admin_id: i64,
+    requested_page: i64,
+    error_message: Option<String>,
+    csrf_token: Option<String>,
+    status: StatusCode,
+) -> Result<Response, AppError> {
+    let per_page = 20_i64;
+    let total_users = sqlx::query_scalar::<_, i64>(
+        r#"
+        SELECT COUNT(*)
+        FROM users
+        "#,
+    )
+    .fetch_one(state.db.pool())
+    .await?;
+
+    let total_pages = if total_users == 0 {
+        1
+    } else {
+        ((total_users - 1) / per_page) + 1
+    };
+    let current_page = requested_page.clamp(1, total_pages);
+    let offset = (current_page - 1) * per_page;
+
+    let users = sqlx::query_as::<_, User>(
+        r#"
+        SELECT id, username, password_hash, display_name, bio, role, created_at
+        FROM users
+        ORDER BY created_at DESC, id DESC
+        LIMIT $1
+        OFFSET $2
+        "#,
+    )
+    .bind(per_page)
+    .bind(offset)
+    .fetch_all(state.db.pool())
+    .await?;
+
+    let html = render(AdminUsersTemplate {
+        users: users
+            .into_iter()
+            .map(|user| admin_user_row(user, current_admin_id))
+            .collect(),
+        error_message,
+        current_page,
+        total_pages,
+        prev_page: (current_page > 1).then_some(current_page - 1),
+        next_page: (current_page < total_pages).then_some(current_page + 1),
+        csrf_token,
+    })?;
+
+    Ok((status, html).into_response())
+}
+
 fn admin_category_row(category: Category) -> AdminCategoryRow {
     AdminCategoryRow {
         id: category.id,
@@ -1444,6 +1580,17 @@ fn admin_category_row(category: Category) -> AdminCategoryRow {
         slug: category.slug,
         description: category.description,
         position: category.position,
+    }
+}
+
+fn admin_user_row(user: User, current_admin_id: i64) -> AdminUserRow {
+    AdminUserRow {
+        id: user.id,
+        username: user.username,
+        display_name: user.display_name,
+        role: role_as_str(user.role).to_string(),
+        created_at: user.created_at,
+        is_self: user.id == current_admin_id,
     }
 }
 
@@ -1514,4 +1661,21 @@ fn validate_admin_category_form(form: &AdminCategoryForm) -> Result<(), String> 
     }
 
     Ok(())
+}
+
+fn parse_role(value: &str) -> Option<Role> {
+    match value.trim() {
+        "user" => Some(Role::User),
+        "moderator" => Some(Role::Moderator),
+        "admin" => Some(Role::Admin),
+        _ => None,
+    }
+}
+
+fn role_as_str(role: Role) -> &'static str {
+    match role {
+        Role::User => "user",
+        Role::Moderator => "moderator",
+        Role::Admin => "admin",
+    }
 }
