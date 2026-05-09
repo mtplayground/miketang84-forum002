@@ -156,8 +156,10 @@ async fn main() -> Result<(), AppError> {
         .route("/p/:id/delete", post(delete_post))
         .route("/p/:id/edit", get(edit_post_form).post(update_post))
         .route("/t/:id/lock", post(lock_thread))
+        .route("/t/:id/pin", post(pin_thread))
         .route("/t/:id/reply", post(reply_to_thread))
         .route("/t/:id/unlock", post(unlock_thread))
+        .route("/t/:id/unpin", post(unpin_thread))
         .route("/t/:thread_key", get(thread_page))
         .route("/me/profile", get(edit_profile_form).post(update_profile))
         .route("/u/:username", get(public_profile))
@@ -606,6 +608,22 @@ async fn unlock_thread(
     _moderator: RequireModerator,
 ) -> Result<Response, AppError> {
     toggle_thread_lock(&state, id, false).await
+}
+
+async fn pin_thread(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    _moderator: RequireModerator,
+) -> Result<Response, AppError> {
+    toggle_thread_pin(&state, id, true).await
+}
+
+async fn unpin_thread(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    _moderator: RequireModerator,
+) -> Result<Response, AppError> {
+    toggle_thread_pin(&state, id, false).await
 }
 
 async fn edit_post_form(
@@ -1246,6 +1264,22 @@ async fn toggle_thread_lock(
     };
 
     if !state.threads.set_locked(thread_id, is_locked).await? {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+
+    Ok(Redirect::to(&thread_path(&thread.slug, thread.id)).into_response())
+}
+
+async fn toggle_thread_pin(
+    state: &AppState,
+    thread_id: i64,
+    is_pinned: bool,
+) -> Result<Response, AppError> {
+    let Some(thread) = state.threads.get_thread_detail(thread_id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    if !state.threads.set_pinned(thread_id, is_pinned).await? {
         return Ok(StatusCode::NOT_FOUND.into_response());
     }
 

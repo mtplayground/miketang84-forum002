@@ -445,4 +445,20 @@ impl ThreadStore {
 
         Ok(result.rows_affected() > 0)
     }
+
+    pub async fn set_pinned(&self, thread_id: i64, is_pinned: bool) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE threads
+            SET is_pinned = $2
+            WHERE id = $1
+            "#,
+        )
+        .bind(thread_id)
+        .bind(is_pinned)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
 }
