@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}New Thread | {{ category.name }}{% endblock %}
+
+{% block flash_messages %}
+{% match error_message %}
+{% when Some with (message) %}
+<div class="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+  {{ message }}
+</div>
+{% when None %}
+<div class="rounded-2xl border border-dashed border-border bg-white/70 px-4 py-3 text-sm text-slate-600">
+  Start a new discussion in this category. Your first post is created with the thread.
+</div>
+{% endmatch %}
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+  <div class="space-y-3">
+    <div class="flex items-center gap-3 text-sm text-slate-500">
+      <a class="font-medium text-accent hover:underline" href="/">Forum index</a>
+      <span>/</span>
+      <a class="font-medium text-accent hover:underline" href="/c/{{ category.slug }}">{{ category.name }}</a>
+      <span>/</span>
+      <span>New thread</span>
+    </div>
+    <h2 class="text-4xl font-semibold tracking-tight text-slate-900">New thread in {{ category.name }}</h2>
+    <p class="max-w-3xl text-lg leading-8 text-slate-600">{{ category.description }}</p>
+  </div>
+
+  <form class="grid gap-6" action="/c/{{ category.slug }}/new" method="post">
+    {% include "_csrf_input.html" %}
+    <label class="grid gap-2">
+      <span class="text-sm font-medium text-slate-700">Title</span>
+      <input
+        class="rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+        type="text"
+        name="title"
+        value="{{ form.title }}"
+        maxlength="120"
+        required>
+    </label>
+
+    <label class="grid gap-2">
+      <span class="text-sm font-medium text-slate-700">First post</span>
+      <textarea
+        class="min-h-56 rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+        name="body"
+        required>{{ form.body }}</textarea>
+    </label>
+
+    <div class="flex items-center justify-between gap-4">
+      <p class="text-sm text-slate-500">Choose a clear title and include enough detail for the first reply to be useful.</p>
+      <button
+        class="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-teal-700"
+        type="submit">
+        Create thread
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

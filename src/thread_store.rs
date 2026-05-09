@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
 
+use crate::models::thread::Thread;
+
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct ThreadListItem {
     pub id: i64,
@@ -24,6 +26,15 @@ pub struct ThreadListPage {
     pub current_page: i64,
     pub total_pages: i64,
     pub per_page: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateThreadInput {
+    pub category_id: i64,
+    pub author_id: i64,
+    pub title: String,
+    pub slug: String,
+    pub body: String,
 }
 
 #[derive(Clone)]
@@ -99,5 +110,51 @@ impl ThreadStore {
             total_pages,
             per_page,
         })
+    }
+
+    pub async fn create_thread_with_initial_post(
+        &self,
+        input: &CreateThreadInput,
+    ) -> Result<Thread, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        let thread = sqlx::query_as::<_, Thread>(
+            r#"
+            INSERT INTO threads (category_id, author_id, title, slug)
+            VALUES ($1, $2, $3, $4)
+            RETURNING
+                id,
+                category_id,
+                author_id,
+                title,
+                slug,
+                is_locked,
+                is_pinned,
+                created_at,
+                last_activity_at
+            "#,
+        )
+        .bind(input.category_id)
+        .bind(input.author_id)
+        .bind(&input.title)
+        .bind(&input.slug)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO posts (thread_id, author_id, body)
+            VALUES ($1, $2, $3)
+            "#,
+        )
+        .bind(thread.id)
+        .bind(input.author_id)
+        .bind(&input.body)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(thread)
     }
 }

@@ -40,6 +40,15 @@ pub struct CategoryTemplate {
     pub csrf_token: Option<String>,
 }
 
+#[derive(Template)]
+#[template(path = "new_thread.html")]
+pub struct NewThreadTemplate {
+    pub category: CategoryHeader,
+    pub form: NewThreadFormValues,
+    pub error_message: Option<String>,
+    pub csrf_token: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct HomeCategoryCard {
     pub name: String,
@@ -89,6 +98,12 @@ pub struct CategoryThreadRow {
     pub last_activity_at: DateTime<Utc>,
     pub is_pinned: bool,
     pub is_locked: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct NewThreadFormValues {
+    pub title: String,
+    pub body: String,
 }
 
 #[derive(Template)]
