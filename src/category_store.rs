@@ -108,4 +108,19 @@ impl CategoryStore {
 
         Ok(result.rows_affected() > 0)
     }
+
+    pub async fn update_position(&self, id: i64, position: i32) -> Result<Option<Category>, sqlx::Error> {
+        sqlx::query_as::<_, Category>(
+            r#"
+            UPDATE categories
+            SET position = $2
+            WHERE id = $1
+            RETURNING id, name, slug, description, position, created_at
+            "#,
+        )
+        .bind(id)
+        .bind(position)
+        .fetch_optional(&self.pool)
+        .await
+    }
 }

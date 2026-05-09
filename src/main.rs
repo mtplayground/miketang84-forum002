@@ -1,13 +1,13 @@
 use axum::{
-    extract::{Form, State},
+    extract::{Form, Path, State},
     http::{header::SET_COOKIE, StatusCode},
     middleware,
     response::{IntoResponse, Redirect, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use chrono::{Duration, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tower_http::{
     services::ServeDir,
@@ -28,8 +28,9 @@ mod templates;
 
 use auth::{
     build_session_cookie, clear_session_cookie, signed_session_id_from_headers, CsrfToken, MaybeUser,
+    RequireAdmin,
 };
-use category_store::CategoryStore;
+use category_store::{CategoryStore, CreateCategoryInput, UpdateCategoryInput};
 use config::Config;
 use db::Db;
 use error::AppError;
@@ -37,7 +38,10 @@ use models::category::Category;
 use models::user::User;
 use password::{hash_password, verify_password};
 use session_store::SessionStore;
-use templates::{render, HomeCategoryCard, HomeTemplate, LoginTemplate, RegisterTemplate};
+use templates::{
+    render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, HomeCategoryCard,
+    HomeTemplate, LoginTemplate, RegisterTemplate,
+};
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -69,6 +73,19 @@ struct LoginForm {
     password: String,
 }
 
+#[derive(Debug, Default, Clone, Deserialize)]
+struct AdminCategoryForm {
+    name: String,
+    slug: String,
+    description: String,
+    position: i32,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+struct ReorderCategoryForm {
+    position: i32,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     init_tracing();
@@ -90,6 +107,11 @@ async fn main() -> Result<(), AppError> {
 
     let app = Router::new()
         .route("/", get(root))
+        .route("/admin/categories", get(admin_categories))
+        .route("/admin/categories/create", post(create_category))
+        .route("/admin/categories/:id/update", post(update_category))
+        .route("/admin/categories/:id/delete", post(delete_category))
+        .route("/admin/categories/:id/reorder", post(reorder_category))
         .route("/register", get(register_form).post(register))
         .route("/login", get(login_form).post(login))
         .route("/logout", axum::routing::post(logout))
@@ -317,6 +339,145 @@ async fn root(
     })
 }
 
+async fn admin_categories(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    csrf_token: CsrfToken,
+) -> Result<impl IntoResponse, AppError> {
+    render_admin_categories(
+        &state,
+        AdminCategoryFormValues::default(),
+        None,
+        csrf_token.0,
+        StatusCode::OK,
+    )
+    .await
+}
+
+async fn create_category(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    csrf_token: CsrfToken,
+    Form(form): Form<AdminCategoryForm>,
+) -> Result<Response, AppError> {
+    let normalized = normalize_admin_category_form(form);
+
+    if let Err(message) = validate_admin_category_form(&normalized) {
+        return render_admin_categories(
+            &state,
+            admin_form_values(&normalized),
+            Some(message),
+            csrf_token.0,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+
+    let input = CreateCategoryInput {
+        name: normalized.name.clone(),
+        slug: normalized.slug.clone(),
+        description: normalized.description.clone(),
+        position: normalized.position,
+    };
+
+    match state.categories.create(&input).await {
+        Ok(_) => Ok(Redirect::to("/admin/categories").into_response()),
+        Err(sqlx::Error::Database(db_error)) if db_error.constraint() == Some("categories_slug_key") => {
+            render_admin_categories(
+                &state,
+                admin_form_values(&normalized),
+                Some("That category slug is already in use.".to_string()),
+                csrf_token.0,
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+async fn update_category(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    csrf_token: CsrfToken,
+    Path(id): Path<i64>,
+    Form(form): Form<AdminCategoryForm>,
+) -> Result<Response, AppError> {
+    let normalized = normalize_admin_category_form(form);
+
+    if let Err(message) = validate_admin_category_form(&normalized) {
+        return render_admin_categories(
+            &state,
+            AdminCategoryFormValues::default(),
+            Some(message),
+            csrf_token.0,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+
+    let input = UpdateCategoryInput {
+        name: normalized.name,
+        slug: normalized.slug,
+        description: normalized.description,
+        position: normalized.position,
+    };
+
+    match state.categories.update(id, &input).await {
+        Ok(Some(_)) => Ok(Redirect::to("/admin/categories").into_response()),
+        Ok(None) => Ok(StatusCode::NOT_FOUND.into_response()),
+        Err(sqlx::Error::Database(db_error)) if db_error.constraint() == Some("categories_slug_key") => {
+            render_admin_categories(
+                &state,
+                AdminCategoryFormValues::default(),
+                Some("That category slug is already in use.".to_string()),
+                csrf_token.0,
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
+async fn delete_category(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    let deleted = state.categories.delete(id).await?;
+
+    if deleted {
+        Ok(Redirect::to("/admin/categories").into_response())
+    } else {
+        Ok(StatusCode::NOT_FOUND.into_response())
+    }
+}
+
+async fn reorder_category(
+    State(state): State<AppState>,
+    _admin: RequireAdmin,
+    csrf_token: CsrfToken,
+    Path(id): Path<i64>,
+    Form(form): Form<ReorderCategoryForm>,
+) -> Result<Response, AppError> {
+    if form.position < 0 {
+        return render_admin_categories(
+            &state,
+            AdminCategoryFormValues::default(),
+            Some("Category position must be zero or greater.".to_string()),
+            csrf_token.0,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+
+    match state.categories.update_position(id, form.position).await? {
+        Some(_) => Ok(Redirect::to("/admin/categories").into_response()),
+        None => Ok(StatusCode::NOT_FOUND.into_response()),
+    }
+}
+
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let payload = HealthResponse {
         status: "ok",
@@ -422,4 +583,84 @@ fn home_category_card(category: Category) -> HomeCategoryCard {
         thread_count: 0,
         most_recent_thread: None,
     }
+}
+
+async fn render_admin_categories(
+    state: &AppState,
+    create_form: AdminCategoryFormValues,
+    error_message: Option<String>,
+    csrf_token: Option<String>,
+    status: StatusCode,
+) -> Result<Response, AppError> {
+    let categories = state
+        .categories
+        .list()
+        .await?
+        .into_iter()
+        .map(admin_category_row)
+        .collect();
+    let html = render(AdminCategoriesTemplate {
+        categories,
+        create_form,
+        error_message,
+        csrf_token,
+    })?;
+
+    Ok((status, html).into_response())
+}
+
+fn admin_category_row(category: Category) -> AdminCategoryRow {
+    AdminCategoryRow {
+        id: category.id,
+        name: category.name,
+        slug: category.slug,
+        description: category.description,
+        position: category.position,
+    }
+}
+
+fn normalize_admin_category_form(form: AdminCategoryForm) -> AdminCategoryForm {
+    AdminCategoryForm {
+        name: form.name.trim().to_string(),
+        slug: form.slug.trim().to_lowercase(),
+        description: form.description.trim().to_string(),
+        position: form.position,
+    }
+}
+
+fn admin_form_values(form: &AdminCategoryForm) -> AdminCategoryFormValues {
+    AdminCategoryFormValues {
+        name: form.name.clone(),
+        slug: form.slug.clone(),
+        description: form.description.clone(),
+        position: form.position,
+    }
+}
+
+fn validate_admin_category_form(form: &AdminCategoryForm) -> Result<(), String> {
+    if form.name.is_empty() {
+        return Err("Category name is required.".to_string());
+    }
+
+    if form.slug.is_empty() {
+        return Err("Category slug is required.".to_string());
+    }
+
+    if !form
+        .slug
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+    {
+        return Err("Category slug may only contain lowercase letters, numbers, and hyphens.".to_string());
+    }
+
+    if form.description.is_empty() {
+        return Err("Category description is required.".to_string());
+    }
+
+    if form.position < 0 {
+        return Err("Category position must be zero or greater.".to_string());
+    }
+
+    Ok(())
 }

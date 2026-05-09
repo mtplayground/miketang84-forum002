@@ -18,6 +18,15 @@ pub struct HomeTemplate {
     pub csrf_token: Option<String>,
 }
 
+#[derive(Template)]
+#[template(path = "admin_categories.html")]
+pub struct AdminCategoriesTemplate {
+    pub categories: Vec<AdminCategoryRow>,
+    pub create_form: AdminCategoryFormValues,
+    pub error_message: Option<String>,
+    pub csrf_token: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct HomeCategoryCard {
     pub name: String,
@@ -32,6 +41,23 @@ pub struct HomeCategoryCard {
 pub struct HomeRecentThread {
     pub title: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdminCategoryRow {
+    pub id: i64,
+    pub name: String,
+    pub slug: String,
+    pub description: String,
+    pub position: i32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AdminCategoryFormValues {
+    pub name: String,
+    pub slug: String,
+    pub description: String,
+    pub position: i32,
 }
 
 #[derive(Template)]
