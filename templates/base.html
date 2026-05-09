@@ -12,7 +12,21 @@
         <h1 class="text-2xl font-semibold tracking-tight">
           <a class="transition hover:text-accent" href="/">miketang84-forum002</a>
         </h1>
-        <nav aria-label="Primary" class="flex items-center gap-4 text-sm font-medium">
+        <nav aria-label="Primary" class="flex flex-wrap items-center justify-end gap-4 text-sm font-medium">
+          <form action="/search" class="flex items-center gap-2" method="get" role="search">
+            <label class="sr-only" for="nav-search">Search</label>
+            <input
+              class="w-52 rounded-full border border-border bg-white px-4 py-2 text-sm text-slate-700 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+              id="nav-search"
+              name="q"
+              placeholder="Search threads and posts"
+              type="search">
+            <button
+              class="rounded-full border border-border px-4 py-2 text-slate-700 transition hover:border-accent hover:text-accent"
+              type="submit">
+              Search
+            </button>
+          </form>
           <a class="rounded-full bg-accentSoft px-4 py-2 text-accent transition hover:bg-teal-200" href="/">Home</a>
           <a class="rounded-full border border-border px-4 py-2 text-slate-700 transition hover:border-accent hover:text-accent" href="/register">Register</a>
           <a class="rounded-full border border-border px-4 py-2 text-slate-700 transition hover:border-accent hover:text-accent" href="/login">Login</a>
