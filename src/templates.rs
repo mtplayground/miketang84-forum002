@@ -24,6 +24,13 @@ pub struct RegisterTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "login.html")]
+pub struct LoginTemplate {
+    pub username: String,
+    pub error_message: Option<String>,
+}
+
+#[derive(Template)]
 #[template(path = "error.html")]
 pub struct ErrorTemplate<'a> {
     pub status_code: u16,

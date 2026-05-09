@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Login | miketang84-forum002{% endblock %}
+
+{% block flash_messages %}
+{% match error_message %}
+{% when Some with (message) %}
+<div class="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+  {{ message }}
+</div>
+{% when None %}
+<div class="rounded-2xl border border-dashed border-border bg-white/70 px-4 py-3 text-sm text-slate-600">
+  Enter your credentials to sign back in.
+</div>
+{% endmatch %}
+{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+  <div class="space-y-3">
+    <p class="text-sm font-semibold uppercase tracking-[0.3em] text-accent">Welcome back</p>
+    <h2 class="text-4xl font-semibold tracking-tight text-slate-900">Login</h2>
+    <p class="max-w-2xl text-lg leading-8 text-slate-600">
+      Sign in with your existing forum account. Successful login creates a new session immediately.
+    </p>
+  </div>
+
+  <form class="grid gap-6" action="/login" method="post">
+    <label class="grid gap-2">
+      <span class="text-sm font-medium text-slate-700">Username</span>
+      <input
+        class="rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+        type="text"
+        name="username"
+        value="{{ username }}"
+        required>
+    </label>
+
+    <label class="grid gap-2">
+      <span class="text-sm font-medium text-slate-700">Password</span>
+      <input
+        class="rounded-2xl border border-border px-4 py-3 outline-none transition focus:border-accent focus:ring-2 focus:ring-accentSoft"
+        type="password"
+        name="password"
+        required>
+    </label>
+
+    <div class="flex items-center justify-between gap-4">
+      <p class="text-sm text-slate-500">
+        New here? <a class="font-medium text-accent hover:underline" href="/register">Create an account</a>.
+      </p>
+      <button
+        class="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white transition hover:bg-teal-700"
+        type="submit">
+        Login
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}
