@@ -8,18 +8,22 @@ use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod config;
+mod db;
 
 use config::Config;
+use db::Db;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct AppState {
     bind_addr: SocketAddr,
+    db: Db,
 }
 
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
     bind_addr: String,
+    database_connected: bool,
 }
 
 #[tokio::main]
@@ -28,7 +32,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let config = Config::from_env()?;
     let bind_addr = config.bind_addr;
-    let state = AppState { bind_addr };
+    let db = Db::connect(&config).await?;
+    db.run_migrations().await?;
+
+    let state = AppState { bind_addr, db };
 
     let app = Router::new()
         .route("/", get(root))
@@ -60,6 +67,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let payload = HealthResponse {
         status: "ok",
         bind_addr: state.bind_addr.to_string(),
+        database_connected: !state.db.pool().is_closed(),
     };
 
     (StatusCode::OK, Json(payload))
