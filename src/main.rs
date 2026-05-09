@@ -1,8 +1,7 @@
-use std::net::SocketAddr;
-
 use axum::{
     extract::{Form, State},
-    http::{header::SET_COOKIE, HeaderMap, HeaderValue, StatusCode},
+    http::{header::SET_COOKIE, StatusCode},
+    middleware,
     response::{IntoResponse, Redirect, Response},
     routing::get,
     Json, Router,
@@ -17,6 +16,7 @@ use tower_http::{
 use tracing::{error, info, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+mod auth;
 mod config;
 mod db;
 mod error;
@@ -25,6 +25,7 @@ mod password;
 mod session_store;
 mod templates;
 
+use auth::{build_session_cookie, clear_session_cookie, signed_session_id_from_headers, MaybeUser};
 use config::Config;
 use db::Db;
 use error::AppError;
@@ -32,13 +33,13 @@ use models::user::User;
 use password::{hash_password, verify_password};
 use session_store::SessionStore;
 use templates::{render, HomeTemplate, LoginTemplate, RegisterTemplate};
-use uuid::Uuid;
 
 #[derive(Clone)]
-struct AppState {
-    bind_addr: SocketAddr,
-    db: Db,
-    sessions: SessionStore,
+pub(crate) struct AppState {
+    pub(crate) bind_addr: std::net::SocketAddr,
+    pub(crate) db: Db,
+    pub(crate) sessions: SessionStore,
+    pub(crate) session_secret: String,
 }
 
 #[derive(Serialize)]
@@ -76,6 +77,7 @@ async fn main() -> Result<(), AppError> {
         bind_addr,
         db,
         sessions,
+        session_secret: config.session_secret.clone(),
     };
 
     let app = Router::new()
@@ -85,6 +87,10 @@ async fn main() -> Result<(), AppError> {
         .route("/logout", axum::routing::post(logout))
         .route("/health", get(health))
         .nest_service("/static", ServeDir::new("static"))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::session_cookie_middleware,
+        ))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
@@ -108,10 +114,6 @@ async fn main() -> Result<(), AppError> {
         .await?;
 
     Ok(())
-}
-
-async fn root() -> Result<impl IntoResponse, AppError> {
-    render(HomeTemplate)
 }
 
 async fn register_form() -> Result<impl IntoResponse, AppError> {
@@ -204,7 +206,8 @@ async fn register(
         .sessions
         .create(user.id, Utc::now() + Duration::days(30))
         .await?;
-    let cookie_value = build_session_cookie(session.id, 30 * 24 * 60 * 60)?;
+    let cookie_value =
+        build_session_cookie(session.id, &state.session_secret, 30 * 24 * 60 * 60).map_err(AppError::from)?;
 
     Ok(([(SET_COOKIE, cookie_value)], Redirect::to("/")).into_response())
 }
@@ -259,19 +262,24 @@ async fn login(
         .sessions
         .create(user.id, Utc::now() + Duration::days(30))
         .await?;
-    let cookie_value = build_session_cookie(session.id, 30 * 24 * 60 * 60)?;
+    let cookie_value =
+        build_session_cookie(session.id, &state.session_secret, 30 * 24 * 60 * 60).map_err(AppError::from)?;
 
     Ok(([(SET_COOKIE, cookie_value)], Redirect::to("/")).into_response())
 }
 
-async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
-    if let Some(session_id) = session_id_from_headers(&headers) {
+async fn logout(State(state): State<AppState>, headers: axum::http::HeaderMap) -> Result<Response, AppError> {
+    if let Some(session_id) = signed_session_id_from_headers(&headers, &state.session_secret) {
         let _ = state.sessions.delete(session_id).await?;
     }
 
-    let cookie_value = clear_session_cookie()?;
+    let cookie_value = clear_session_cookie().map_err(AppError::from)?;
 
     Ok(([(SET_COOKIE, cookie_value)], Redirect::to("/")).into_response())
+}
+
+async fn root(_maybe_user: MaybeUser) -> Result<impl IntoResponse, AppError> {
+    render(HomeTemplate)
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
@@ -350,46 +358,6 @@ fn validate_registration_form(form: &RegistrationForm, password: &str) -> Result
     }
 
     Ok(())
-}
-
-fn build_session_cookie(session_id: Uuid, max_age_seconds: i64) -> Result<HeaderValue, AppError> {
-    let cookie = format!(
-        "session_id={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
-        session_id, max_age_seconds
-    );
-
-    HeaderValue::from_str(&cookie).map_err(|err| {
-        AppError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            err.to_string(),
-        ))
-    })
-}
-
-fn clear_session_cookie() -> Result<HeaderValue, AppError> {
-    HeaderValue::from_str("session_id=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0").map_err(
-        |err| {
-            AppError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                err.to_string(),
-            ))
-        },
-    )
-}
-
-fn session_id_from_headers(headers: &HeaderMap) -> Option<Uuid> {
-    let cookie_header = headers.get(axum::http::header::COOKIE)?;
-    let cookie_str = cookie_header.to_str().ok()?;
-
-    cookie_str.split(';').find_map(|pair| {
-        let (name, value) = pair.trim().split_once('=')?;
-
-        if name == "session_id" {
-            Uuid::parse_str(value).ok()
-        } else {
-            None
-        }
-    })
 }
 
 async fn shutdown_signal() {
