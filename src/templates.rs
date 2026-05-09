@@ -155,6 +155,8 @@ pub struct ThreadPostRow {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub edit_url: Option<String>,
+    pub delete_action: Option<String>,
+    pub is_deleted: bool,
 }
 
 #[derive(Debug, Clone)]

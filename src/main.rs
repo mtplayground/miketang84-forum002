@@ -141,6 +141,7 @@ async fn main() -> Result<(), AppError> {
         .route("/c/:slug", get(category_page))
         .route("/c/:slug/t/:thread_key", get(legacy_thread_page))
         .route("/c/:slug/new", get(new_thread_form).post(create_thread))
+        .route("/p/:id/delete", post(delete_post))
         .route("/p/:id/edit", get(edit_post_form).post(update_post))
         .route("/t/:id/reply", post(reply_to_thread))
         .route("/t/:thread_key", get(thread_page))
@@ -639,6 +640,32 @@ async fn update_post(
     Ok(Redirect::to(&redirect_target).into_response())
 }
 
+async fn delete_post(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    user: RequireUser,
+) -> Result<Response, AppError> {
+    let Some(post) = state.threads.get_post_detail(id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    if !can_edit_post(&post, user.0.user.id, state.edit_window_minutes) {
+        return Ok(StatusCode::FORBIDDEN.into_response());
+    }
+
+    if !state.threads.soft_delete_post(id).await? {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+
+    let page = state.threads.page_for_post(id, 20).await?.unwrap_or(1);
+    let redirect_target = format!(
+        "/t/{}-{}?page={}#post-{}",
+        post.thread_id, post.thread_slug, page, post.id
+    );
+
+    Ok(Redirect::to(&redirect_target).into_response())
+}
+
 async fn admin_categories(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -903,22 +930,30 @@ fn thread_post_row(
     current_user_id: Option<i64>,
     edit_window_minutes: u64,
 ) -> ThreadPostRow {
+    let can_edit = can_edit_post_item(
+        post.author_id,
+        post.created_at,
+        current_user_id,
+        edit_window_minutes,
+    );
+
     ThreadPostRow {
         id: post.id,
         author_username: post.author_username,
         body: post.body,
         created_at: post.created_at,
         updated_at: post.updated_at,
-        edit_url: if can_edit_post_item(
-            post.author_id,
-            post.created_at,
-            current_user_id,
-            edit_window_minutes,
-        ) {
+        edit_url: if can_edit {
             Some(format!("/p/{}/edit", post.id))
         } else {
             None
         },
+        delete_action: if can_edit {
+            Some(format!("/p/{}/delete", post.id))
+        } else {
+            None
+        },
+        is_deleted: post.deleted_at.is_some(),
     }
 }
 
