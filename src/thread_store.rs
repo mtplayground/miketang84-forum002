@@ -64,6 +64,12 @@ pub struct ThreadPostsPage {
     pub per_page: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ReplyCreateResult {
+    pub post_id: i64,
+    pub total_posts: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct CreateThreadInput {
     pub category_id: i64,
@@ -278,6 +284,59 @@ impl ThreadStore {
             current_page,
             total_pages,
             per_page,
+        })
+    }
+
+    pub async fn create_reply(
+        &self,
+        thread_id: i64,
+        author_id: i64,
+        body: &str,
+    ) -> Result<ReplyCreateResult, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        let (post_id, created_at) = sqlx::query_as::<_, (i64, DateTime<Utc>)>(
+            r#"
+            INSERT INTO posts (thread_id, author_id, body)
+            VALUES ($1, $2, $3)
+            RETURNING id, created_at
+            "#,
+        )
+        .bind(thread_id)
+        .bind(author_id)
+        .bind(body)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"
+            UPDATE threads
+            SET last_activity_at = $2
+            WHERE id = $1
+            "#,
+        )
+        .bind(thread_id)
+        .bind(created_at)
+        .execute(&mut *tx)
+        .await?;
+
+        let total_posts = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*)
+            FROM posts
+            WHERE thread_id = $1
+              AND deleted_at IS NULL
+            "#,
+        )
+        .bind(thread_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(ReplyCreateResult {
+            post_id,
+            total_posts,
         })
     }
 }

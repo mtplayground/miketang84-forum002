@@ -61,6 +61,8 @@ pub struct ThreadTemplate {
     pub next_page: Option<i64>,
     pub can_reply: bool,
     pub reply_form_action: String,
+    pub reply_error_message: Option<String>,
+    pub reply_body: String,
     pub csrf_token: Option<String>,
 }
 

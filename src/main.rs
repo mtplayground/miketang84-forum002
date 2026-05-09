@@ -102,6 +102,12 @@ struct NewThreadForm {
     body: String,
 }
 
+#[derive(Debug, Default, Clone, Deserialize)]
+struct ReplyForm {
+    body: String,
+    page: Option<i64>,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     init_tracing();
@@ -128,6 +134,7 @@ async fn main() -> Result<(), AppError> {
         .route("/c/:slug", get(category_page))
         .route("/c/:slug/t/:thread_key", get(legacy_thread_page))
         .route("/c/:slug/new", get(new_thread_form).post(create_thread))
+        .route("/t/:id/reply", post(reply_to_thread))
         .route("/t/:thread_key", get(thread_page))
         .route("/admin/categories", get(admin_categories))
         .route("/admin/categories/create", post(create_category))
@@ -431,35 +438,17 @@ async fn thread_page(
         return Ok(Redirect::to(&canonical_path).into_response());
     }
 
-    let page = query.page.unwrap_or(1).max(1);
-    let posts_page = state.threads.list_posts_for_thread(thread.id, page, 20).await?;
-    let can_reply = maybe_user.0.is_some() && !thread.is_locked;
-    let html = render(ThreadTemplate {
-        thread: ThreadHeader {
-            id: thread.id,
-            title: thread.title,
-            slug: thread.slug,
-            category_name: thread.category_name,
-            category_slug: thread.category_slug,
-            author_username: thread.author_username,
-            created_at: thread.created_at,
-            last_activity_at: thread.last_activity_at,
-            is_pinned: thread.is_pinned,
-            is_locked: thread.is_locked,
-        },
-        posts: posts_page.posts.into_iter().map(thread_post_row).collect(),
-        total_posts: posts_page.total_posts,
-        current_page: posts_page.current_page,
-        total_pages: posts_page.total_pages,
-        prev_page: (posts_page.current_page > 1).then_some(posts_page.current_page - 1),
-        next_page: (posts_page.current_page < posts_page.total_pages)
-            .then_some(posts_page.current_page + 1),
-        can_reply,
-        reply_form_action: format!("/t/{}/reply", thread.id),
-        csrf_token: csrf_token.0,
-    })?;
-
-    Ok(html.into_response())
+    render_thread_page(
+        &state,
+        thread,
+        query.page.unwrap_or(1).max(1),
+        maybe_user.0.is_some(),
+        None,
+        String::new(),
+        csrf_token.0,
+        StatusCode::OK,
+    )
+    .await
 }
 
 async fn legacy_thread_page(
@@ -519,6 +508,63 @@ async fn create_thread(
         .await?;
 
     Ok(Redirect::to(&thread_path(&thread.slug, thread.id)).into_response())
+}
+
+async fn reply_to_thread(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    user: RequireUser,
+    csrf_token: CsrfToken,
+    Form(form): Form<ReplyForm>,
+) -> Result<Response, AppError> {
+    let Some(thread) = state.threads.get_thread_detail(id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    let reply_page = form.page.unwrap_or(1).max(1);
+    let body = form.body.trim().to_string();
+
+    if thread.is_locked {
+        return render_thread_page(
+            &state,
+            thread,
+            reply_page,
+            true,
+            Some("This thread is locked. New replies are disabled.".to_string()),
+            body,
+            csrf_token.0,
+            StatusCode::LOCKED,
+        )
+        .await;
+    }
+
+    if body.is_empty() {
+        return render_thread_page(
+            &state,
+            thread,
+            reply_page,
+            true,
+            Some("Reply body is required.".to_string()),
+            body,
+            csrf_token.0,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+
+    let reply = state
+        .threads
+        .create_reply(id, user.0.user.id, &body)
+        .await?;
+    let last_page = ((reply.total_posts - 1) / 20) + 1;
+    let redirect_target = format!(
+        "{}?page={}#post-{}",
+        thread_path(&thread.slug, thread.id),
+        last_page,
+        reply.post_id
+    );
+
+    Ok(Redirect::to(&redirect_target).into_response())
 }
 
 async fn admin_categories(
@@ -856,6 +902,51 @@ fn render_new_thread(
         },
         form,
         error_message,
+        csrf_token,
+    })?;
+
+    Ok((status, html).into_response())
+}
+
+async fn render_thread_page(
+    state: &AppState,
+    thread: thread_store::ThreadDetail,
+    requested_page: i64,
+    is_logged_in: bool,
+    reply_error_message: Option<String>,
+    reply_body: String,
+    csrf_token: Option<String>,
+    status: StatusCode,
+) -> Result<Response, AppError> {
+    let posts_page = state
+        .threads
+        .list_posts_for_thread(thread.id, requested_page, 20)
+        .await?;
+    let can_reply = is_logged_in && !thread.is_locked;
+    let html = render(ThreadTemplate {
+        thread: ThreadHeader {
+            id: thread.id,
+            title: thread.title,
+            slug: thread.slug,
+            category_name: thread.category_name,
+            category_slug: thread.category_slug,
+            author_username: thread.author_username,
+            created_at: thread.created_at,
+            last_activity_at: thread.last_activity_at,
+            is_pinned: thread.is_pinned,
+            is_locked: thread.is_locked,
+        },
+        posts: posts_page.posts.into_iter().map(thread_post_row).collect(),
+        total_posts: posts_page.total_posts,
+        current_page: posts_page.current_page,
+        total_pages: posts_page.total_pages,
+        prev_page: (posts_page.current_page > 1).then_some(posts_page.current_page - 1),
+        next_page: (posts_page.current_page < posts_page.total_pages)
+            .then_some(posts_page.current_page + 1),
+        can_reply,
+        reply_form_action: format!("/t/{}/reply", thread.id),
+        reply_error_message,
+        reply_body,
         csrf_token,
     })?;
 
