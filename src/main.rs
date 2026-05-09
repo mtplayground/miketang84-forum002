@@ -23,6 +23,7 @@ mod db;
 mod error;
 mod models;
 mod password;
+mod profile_store;
 mod session_store;
 mod templates;
 mod thread_store;
@@ -38,12 +39,14 @@ use error::AppError;
 use models::category::Category;
 use models::user::User;
 use password::{hash_password, verify_password};
+use profile_store::ProfileStore;
 use session_store::SessionStore;
 use templates::{
     render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, CategoryHeader,
     CategoryTemplate, CategoryThreadRow, EditPostContext, EditPostFormValues, EditPostTemplate,
     HomeCategoryCard, HomeTemplate, LoginTemplate, NewThreadFormValues, NewThreadTemplate,
-    RegisterTemplate, ThreadHeader, ThreadPostRow, ThreadTemplate,
+    ProfileHeader, ProfilePostRow, ProfileTemplate, RegisterTemplate, ThreadHeader, ThreadPostRow,
+    ThreadTemplate,
 };
 use thread_store::{CreateThreadInput, ThreadStore};
 
@@ -53,6 +56,7 @@ pub(crate) struct AppState {
     pub(crate) db: Db,
     pub(crate) categories: CategoryStore,
     pub(crate) edit_window_minutes: u64,
+    pub(crate) profiles: ProfileStore,
     pub(crate) sessions: SessionStore,
     pub(crate) session_secret: String,
     pub(crate) threads: ThreadStore,
@@ -123,6 +127,7 @@ async fn main() -> Result<(), AppError> {
     let db = Db::connect(&config).await?;
     db.run_migrations().await?;
     let categories = CategoryStore::new(db.pool());
+    let profiles = ProfileStore::new(db.pool());
     let sessions = SessionStore::new(db.pool());
     let threads = ThreadStore::new(db.pool());
 
@@ -131,6 +136,7 @@ async fn main() -> Result<(), AppError> {
         db,
         categories,
         edit_window_minutes: config.edit_window_minutes,
+        profiles,
         sessions,
         session_secret: config.session_secret.clone(),
         threads,
@@ -145,6 +151,7 @@ async fn main() -> Result<(), AppError> {
         .route("/p/:id/edit", get(edit_post_form).post(update_post))
         .route("/t/:id/reply", post(reply_to_thread))
         .route("/t/:thread_key", get(thread_page))
+        .route("/u/:username", get(public_profile))
         .route("/admin/categories", get(admin_categories))
         .route("/admin/categories/create", post(create_category))
         .route("/admin/categories/:id/update", post(update_category))
@@ -666,6 +673,32 @@ async fn delete_post(
     Ok(Redirect::to(&redirect_target).into_response())
 }
 
+async fn public_profile(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    _maybe_user: MaybeUser,
+    csrf_token: CsrfToken,
+) -> Result<Response, AppError> {
+    let username = username.trim().to_lowercase();
+    let Some(profile) = state.profiles.get_public_profile(&username).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+    let recent_posts = state.profiles.recent_posts(profile.id, 10).await?;
+    let html = render(ProfileTemplate {
+        profile: ProfileHeader {
+            username: profile.username,
+            display_name: profile.display_name,
+            bio: profile.bio,
+            created_at: profile.created_at,
+            post_count: profile.post_count,
+        },
+        recent_posts: recent_posts.into_iter().map(profile_post_row).collect(),
+        csrf_token: csrf_token.0,
+    })?;
+
+    Ok(html.into_response())
+}
+
 async fn admin_categories(
     State(state): State<AppState>,
     _admin: RequireAdmin,
@@ -922,6 +955,17 @@ fn category_thread_row(thread: thread_store::ThreadListItem) -> CategoryThreadRo
         last_activity_at: thread.last_activity_at,
         is_pinned: thread.is_pinned,
         is_locked: thread.is_locked,
+    }
+}
+
+fn profile_post_row(post: profile_store::PublicProfilePost) -> ProfilePostRow {
+    ProfilePostRow {
+        post_id: post.post_id,
+        thread_id: post.thread_id,
+        thread_slug: post.thread_slug,
+        thread_title: post.thread_title,
+        body: post.body,
+        created_at: post.created_at,
     }
 }
 

@@ -39,7 +39,7 @@
         </div>
         <h2 class="text-4xl font-semibold tracking-tight text-slate-900">{{ thread.title }}</h2>
         <p class="text-sm text-slate-500">
-          Started by <span class="font-medium text-slate-700">{{ thread.author_username }}</span>
+          Started by <a class="font-medium text-slate-700 hover:text-accent" href="/u/{{ thread.author_username }}">{{ thread.author_username }}</a>
           on {{ thread.created_at }}
         </p>
       </div>
@@ -63,7 +63,9 @@
       <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div class="space-y-2">
           <p class="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Post #{{ post.id }}</p>
-          <h3 class="text-lg font-semibold text-slate-900">{{ post.author_username }}</h3>
+          <h3 class="text-lg font-semibold text-slate-900">
+            <a class="hover:text-accent" href="/u/{{ post.author_username }}">{{ post.author_username }}</a>
+          </h3>
           {% match post.edit_url %}
           {% when Some with (url) %}
           <div class="flex items-center gap-4 text-sm">
