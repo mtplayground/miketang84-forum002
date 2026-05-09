@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}miketang84-forum002{% endblock %}</title>
+  </head>
+  <body>
+    <header>
+      <h1><a href="/">miketang84-forum002</a></h1>
+      <nav aria-label="Primary">
+        <a href="/">Home</a>
+      </nav>
+    </header>
+
+    <main>
+      <section aria-label="Flash messages">
+        {% block flash_messages %}
+        {% endblock %}
+      </section>
+
+      {% block content %}
+      {% endblock %}
+    </main>
+
+    <footer>
+      <small>Powered by Axum, Askama, and PostgreSQL.</small>
+    </footer>
+  </body>
+</html>

@@ -9,9 +9,11 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 mod config;
 mod db;
+mod templates;
 
 use config::Config;
 use db::Db;
+use templates::{HomeTemplate, HtmlTemplate};
 
 #[derive(Clone)]
 struct AppState {
@@ -59,8 +61,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn root() -> &'static str {
-    "miketang84-forum002"
+async fn root() -> impl IntoResponse {
+    HtmlTemplate(HomeTemplate)
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
