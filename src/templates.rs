@@ -1,5 +1,6 @@
 use askama::Template;
 use axum::response::Html;
+use chrono::{DateTime, Utc};
 
 use crate::error::AppError;
 
@@ -13,7 +14,24 @@ where
 #[derive(Template)]
 #[template(path = "home.html")]
 pub struct HomeTemplate {
+    pub categories: Vec<HomeCategoryCard>,
     pub csrf_token: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HomeCategoryCard {
+    pub name: String,
+    pub slug: String,
+    pub description: String,
+    pub position: i32,
+    pub thread_count: i64,
+    pub most_recent_thread: Option<HomeRecentThread>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HomeRecentThread {
+    pub title: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Template)]
