@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Form, Path, State},
+    extract::{Form, Path, Query, State},
     http::{header::SET_COOKIE, StatusCode},
     middleware,
     response::{IntoResponse, Redirect, Response},
@@ -25,6 +25,7 @@ mod models;
 mod password;
 mod session_store;
 mod templates;
+mod thread_store;
 
 use auth::{
     build_session_cookie, clear_session_cookie, signed_session_id_from_headers, CsrfToken, MaybeUser,
@@ -39,9 +40,11 @@ use models::user::User;
 use password::{hash_password, verify_password};
 use session_store::SessionStore;
 use templates::{
-    render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, HomeCategoryCard,
-    HomeTemplate, LoginTemplate, RegisterTemplate,
+    render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, CategoryHeader,
+    CategoryTemplate, CategoryThreadRow, HomeCategoryCard, HomeTemplate, LoginTemplate,
+    RegisterTemplate,
 };
+use thread_store::ThreadStore;
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -50,6 +53,7 @@ pub(crate) struct AppState {
     pub(crate) categories: CategoryStore,
     pub(crate) sessions: SessionStore,
     pub(crate) session_secret: String,
+    pub(crate) threads: ThreadStore,
 }
 
 #[derive(Serialize)]
@@ -86,6 +90,11 @@ struct ReorderCategoryForm {
     position: i32,
 }
 
+#[derive(Debug, Default, Clone, Deserialize)]
+struct PageQuery {
+    page: Option<i64>,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     init_tracing();
@@ -96,6 +105,7 @@ async fn main() -> Result<(), AppError> {
     db.run_migrations().await?;
     let categories = CategoryStore::new(db.pool());
     let sessions = SessionStore::new(db.pool());
+    let threads = ThreadStore::new(db.pool());
 
     let state = AppState {
         bind_addr,
@@ -103,10 +113,12 @@ async fn main() -> Result<(), AppError> {
         categories,
         sessions,
         session_secret: config.session_secret.clone(),
+        threads,
     };
 
     let app = Router::new()
         .route("/", get(root))
+        .route("/c/:slug", get(category_page))
         .route("/admin/categories", get(admin_categories))
         .route("/admin/categories/create", post(create_category))
         .route("/admin/categories/:id/update", post(update_category))
@@ -337,6 +349,37 @@ async fn root(
         categories,
         csrf_token: csrf_token.0,
     })
+}
+
+async fn category_page(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Query(query): Query<PageQuery>,
+    _maybe_user: MaybeUser,
+    csrf_token: CsrfToken,
+) -> Result<Response, AppError> {
+    let Some(category) = state.categories.get_by_slug(&slug).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    let page = query.page.unwrap_or(1).max(1);
+    let listing = state.threads.list_by_category(category.id, page, 20).await?;
+    let html = render(CategoryTemplate {
+        category: CategoryHeader {
+            name: category.name,
+            slug: category.slug,
+            description: category.description,
+        },
+        threads: listing.threads.into_iter().map(category_thread_row).collect(),
+        total_threads: listing.total_threads,
+        current_page: listing.current_page,
+        total_pages: listing.total_pages,
+        prev_page: (listing.current_page > 1).then_some(listing.current_page - 1),
+        next_page: (listing.current_page < listing.total_pages).then_some(listing.current_page + 1),
+        csrf_token: csrf_token.0,
+    })?;
+
+    Ok(html.into_response())
 }
 
 async fn admin_categories(
@@ -582,6 +625,18 @@ fn home_category_card(category: Category) -> HomeCategoryCard {
         position: category.position,
         thread_count: 0,
         most_recent_thread: None,
+    }
+}
+
+fn category_thread_row(thread: thread_store::ThreadListItem) -> CategoryThreadRow {
+    CategoryThreadRow {
+        title: thread.title,
+        slug: thread.slug,
+        author_username: thread.author_username,
+        reply_count: thread.reply_count,
+        last_activity_at: thread.last_activity_at,
+        is_pinned: thread.is_pinned,
+        is_locked: thread.is_locked,
     }
 }
 

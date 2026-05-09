@@ -27,6 +27,19 @@ pub struct AdminCategoriesTemplate {
     pub csrf_token: Option<String>,
 }
 
+#[derive(Template)]
+#[template(path = "category.html")]
+pub struct CategoryTemplate {
+    pub category: CategoryHeader,
+    pub threads: Vec<CategoryThreadRow>,
+    pub total_threads: i64,
+    pub current_page: i64,
+    pub total_pages: i64,
+    pub prev_page: Option<i64>,
+    pub next_page: Option<i64>,
+    pub csrf_token: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct HomeCategoryCard {
     pub name: String,
@@ -58,6 +71,24 @@ pub struct AdminCategoryFormValues {
     pub slug: String,
     pub description: String,
     pub position: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct CategoryHeader {
+    pub name: String,
+    pub slug: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CategoryThreadRow {
+    pub title: String,
+    pub slug: String,
+    pub author_username: String,
+    pub reply_count: i64,
+    pub last_activity_at: DateTime<Utc>,
+    pub is_pinned: bool,
+    pub is_locked: bool,
 }
 
 #[derive(Template)]
