@@ -22,6 +22,14 @@ pub struct PublicProfilePost {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct EditableProfile {
+    pub id: i64,
+    pub username: String,
+    pub display_name: String,
+    pub bio: String,
+}
+
 #[derive(Clone)]
 pub struct ProfileStore {
     pool: PgPool,
@@ -83,5 +91,49 @@ impl ProfileStore {
         .bind(limit)
         .fetch_all(&self.pool)
         .await
+    }
+
+    pub async fn get_editable_profile(
+        &self,
+        user_id: i64,
+    ) -> Result<Option<EditableProfile>, sqlx::Error> {
+        sqlx::query_as::<_, EditableProfile>(
+            r#"
+            SELECT
+                id,
+                username,
+                display_name,
+                bio
+            FROM users
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    pub async fn update_profile(
+        &self,
+        user_id: i64,
+        display_name: &str,
+        bio: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let rows_affected = sqlx::query(
+            r#"
+            UPDATE users
+            SET display_name = $2,
+                bio = $3
+            WHERE id = $1
+            "#,
+        )
+        .bind(user_id)
+        .bind(display_name)
+        .bind(bio)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+
+        Ok(rows_affected > 0)
     }
 }
