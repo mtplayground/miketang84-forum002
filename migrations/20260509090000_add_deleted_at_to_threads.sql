@@ -1,0 +1,2 @@
+ALTER TABLE threads
+ADD COLUMN deleted_at TIMESTAMPTZ;

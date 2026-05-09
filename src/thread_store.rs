@@ -33,6 +33,7 @@ pub struct ThreadDetail {
     pub is_pinned: bool,
     pub created_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -115,6 +116,7 @@ impl ThreadStore {
             SELECT COUNT(*)
             FROM threads
             WHERE category_id = $1
+              AND deleted_at IS NULL
             "#,
         )
         .bind(category_id)
@@ -147,6 +149,7 @@ impl ThreadStore {
             INNER JOIN users u ON u.id = t.author_id
             LEFT JOIN posts p ON p.thread_id = t.id AND p.deleted_at IS NULL
             WHERE t.category_id = $1
+              AND t.deleted_at IS NULL
             GROUP BY t.id, u.username
             ORDER BY t.is_pinned DESC, t.last_activity_at DESC, t.id DESC
             LIMIT $2
@@ -187,7 +190,8 @@ impl ThreadStore {
                 is_locked,
                 is_pinned,
                 created_at,
-                last_activity_at
+                last_activity_at,
+                deleted_at
             "#,
         )
         .bind(input.category_id)
@@ -229,7 +233,8 @@ impl ThreadStore {
                 t.is_locked,
                 t.is_pinned,
                 t.created_at,
-                t.last_activity_at
+                t.last_activity_at,
+                t.deleted_at
             FROM threads t
             INNER JOIN categories c ON c.id = t.category_id
             INNER JOIN users u ON u.id = t.author_id
@@ -478,6 +483,22 @@ impl ThreadStore {
         )
         .bind(thread_id)
         .bind(is_pinned)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn soft_delete_thread(&self, thread_id: i64) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE threads
+            SET deleted_at = NOW()
+            WHERE id = $1
+              AND deleted_at IS NULL
+            "#,
+        )
+        .bind(thread_id)
         .execute(&self.pool)
         .await?;
 

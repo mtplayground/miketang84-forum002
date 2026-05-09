@@ -44,7 +44,7 @@ use session_store::SessionStore;
 use templates::{
     render, AdminCategoriesTemplate, AdminCategoryFormValues, AdminCategoryRow, CategoryHeader,
     CategoryTemplate, CategoryThreadRow, EditPostContext, EditPostFormValues, EditPostTemplate,
-    EditProfileContext, EditProfileFormValues, EditProfileTemplate, HomeCategoryCard,
+    EditProfileContext, EditProfileFormValues, EditProfileTemplate, ErrorTemplate, HomeCategoryCard,
     HomeTemplate, LoginTemplate, NewThreadFormValues, NewThreadTemplate, ProfileHeader,
     ProfilePostRow, ProfileTemplate, RegisterTemplate, ThreadHeader, ThreadPostRow, ThreadTemplate,
 };
@@ -157,6 +157,7 @@ async fn main() -> Result<(), AppError> {
         .route("/p/:id/mod-delete", post(moderator_delete_post))
         .route("/p/:id/edit", get(edit_post_form).post(update_post))
         .route("/t/:id/lock", post(lock_thread))
+        .route("/t/:id/mod-delete", post(moderator_delete_thread))
         .route("/t/:id/pin", post(pin_thread))
         .route("/t/:id/reply", post(reply_to_thread))
         .route("/t/:id/unlock", post(unlock_thread))
@@ -466,6 +467,10 @@ async fn thread_page(
         return Ok(Redirect::to(&canonical_path).into_response());
     }
 
+    if thread.deleted_at.is_some() {
+        return render_removed_thread(csrf_token.0, StatusCode::GONE);
+    }
+
     render_thread_page(
         &state,
         thread,
@@ -549,6 +554,10 @@ async fn reply_to_thread(
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
 
+    if thread.deleted_at.is_some() {
+        return render_removed_thread(csrf_token.0, StatusCode::GONE);
+    }
+
     let reply_page = form.page.unwrap_or(1).max(1);
     let body = form.body.trim().to_string();
 
@@ -625,6 +634,22 @@ async fn unpin_thread(
     _moderator: RequireModerator,
 ) -> Result<Response, AppError> {
     toggle_thread_pin(&state, id, false).await
+}
+
+async fn moderator_delete_thread(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    _moderator: RequireModerator,
+) -> Result<Response, AppError> {
+    let Some(thread) = state.threads.get_thread_detail(id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    if !state.threads.soft_delete_thread(id).await? {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+
+    Ok(Redirect::to(&thread_path(&thread.slug, thread.id)).into_response())
 }
 
 async fn edit_post_form(
@@ -1281,6 +1306,20 @@ fn render_edit_profile(
         },
         form,
         error_message,
+        csrf_token,
+    })?;
+
+    Ok((status, html).into_response())
+}
+
+fn render_removed_thread(
+    csrf_token: Option<String>,
+    status: StatusCode,
+) -> Result<Response, AppError> {
+    let html = render(ErrorTemplate {
+        status_code: status.as_u16(),
+        title: "Thread Removed",
+        message: "This thread has been removed from public view.",
         csrf_token,
     })?;
 

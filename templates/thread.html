@@ -54,6 +54,12 @@
           <p>{{ thread.last_activity_at }}</p>
         </div>
         {% if can_moderate %}
+        <form action="/t/{{ thread.id }}/mod-delete" method="post">
+          {% include "_csrf_input.html" %}
+          <button class="w-full rounded-full border border-rose-200 px-4 py-2 font-medium text-rose-700 transition hover:border-rose-400 hover:text-rose-800" type="submit">
+            Delete thread
+          </button>
+        </form>
         <form action="/t/{{ thread.id }}/{% if thread.is_pinned %}unpin{% else %}pin{% endif %}" method="post">
           {% include "_csrf_input.html" %}
           <button class="w-full rounded-full border border-border px-4 py-2 font-medium text-slate-700 transition hover:border-accent hover:text-accent" type="submit">
