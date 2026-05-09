@@ -14,4 +14,5 @@ pub struct Thread {
     pub is_pinned: bool,
     pub created_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }
