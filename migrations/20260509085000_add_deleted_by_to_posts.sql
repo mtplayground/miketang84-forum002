@@ -1,0 +1,2 @@
+ALTER TABLE posts
+ADD COLUMN deleted_by BIGINT REFERENCES users(id);
