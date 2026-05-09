@@ -154,6 +154,7 @@ async fn main() -> Result<(), AppError> {
         .route("/c/:slug/t/:thread_key", get(legacy_thread_page))
         .route("/c/:slug/new", get(new_thread_form).post(create_thread))
         .route("/p/:id/delete", post(delete_post))
+        .route("/p/:id/mod-delete", post(moderator_delete_post))
         .route("/p/:id/edit", get(edit_post_form).post(update_post))
         .route("/t/:id/lock", post(lock_thread))
         .route("/t/:id/pin", post(pin_thread))
@@ -716,6 +717,32 @@ async fn delete_post(
     Ok(Redirect::to(&redirect_target).into_response())
 }
 
+async fn moderator_delete_post(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    moderator: RequireModerator,
+) -> Result<Response, AppError> {
+    let Some(post) = state.threads.get_post_detail(id).await? else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    };
+
+    if !state
+        .threads
+        .moderator_soft_delete_post(id, moderator.0.user.id)
+        .await?
+    {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
+
+    let page = state.threads.page_for_post(id, 20).await?.unwrap_or(1);
+    let redirect_target = format!(
+        "/t/{}-{}?page={}#post-{}",
+        post.thread_id, post.thread_slug, page, post.id
+    );
+
+    Ok(Redirect::to(&redirect_target).into_response())
+}
+
 async fn public_profile(
     State(state): State<AppState>,
     Path(username): Path<String>,
@@ -1080,6 +1107,7 @@ fn thread_post_row(
     post: thread_store::ThreadPostItem,
     current_user_id: Option<i64>,
     edit_window_minutes: u64,
+    can_moderate: bool,
 ) -> ThreadPostRow {
     let can_edit = can_edit_post_item(
         post.author_id,
@@ -1101,6 +1129,11 @@ fn thread_post_row(
         },
         delete_action: if can_edit {
             Some(format!("/p/{}/delete", post.id))
+        } else {
+            None
+        },
+        mod_delete_action: if can_moderate && post.deleted_at.is_none() {
+            Some(format!("/p/{}/mod-delete", post.id))
         } else {
             None
         },
@@ -1322,7 +1355,7 @@ async fn render_thread_page(
         posts: posts_page
             .posts
             .into_iter()
-            .map(|post| thread_post_row(post, current_user_id, state.edit_window_minutes))
+            .map(|post| thread_post_row(post, current_user_id, state.edit_window_minutes, can_moderate))
             .collect(),
         total_posts: posts_page.total_posts,
         current_page: posts_page.current_page,

@@ -199,6 +199,7 @@ pub struct ThreadPostRow {
     pub updated_at: DateTime<Utc>,
     pub edit_url: Option<String>,
     pub delete_action: Option<String>,
+    pub mod_delete_action: Option<String>,
     pub is_deleted: bool,
 }
 

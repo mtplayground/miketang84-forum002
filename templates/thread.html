@@ -95,6 +95,14 @@
           </div>
           {% when None %}
           {% endmatch %}
+          {% match post.mod_delete_action %}
+          {% when Some with (action) %}
+          <form action="{{ action }}" method="post">
+            {% include "_csrf_input.html" %}
+            <button class="text-sm font-medium text-rose-700 hover:underline" type="submit">Moderator delete</button>
+          </form>
+          {% when None %}
+          {% endmatch %}
         </div>
         <div class="text-sm text-slate-500">
           <p>Created: {{ post.created_at }}</p>

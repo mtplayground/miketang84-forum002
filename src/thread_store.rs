@@ -430,6 +430,28 @@ impl ThreadStore {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn moderator_soft_delete_post(
+        &self,
+        post_id: i64,
+        deleted_by: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            UPDATE posts
+            SET deleted_at = NOW(),
+                deleted_by = $2
+            WHERE id = $1
+              AND deleted_at IS NULL
+            "#,
+        )
+        .bind(post_id)
+        .bind(deleted_by)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn set_locked(&self, thread_id: i64, is_locked: bool) -> Result<bool, sqlx::Error> {
         let result = sqlx::query(
             r#"
