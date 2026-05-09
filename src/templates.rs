@@ -49,6 +49,21 @@ pub struct NewThreadTemplate {
     pub csrf_token: Option<String>,
 }
 
+#[derive(Template)]
+#[template(path = "thread.html")]
+pub struct ThreadTemplate {
+    pub thread: ThreadHeader,
+    pub posts: Vec<ThreadPostRow>,
+    pub total_posts: i64,
+    pub current_page: i64,
+    pub total_pages: i64,
+    pub prev_page: Option<i64>,
+    pub next_page: Option<i64>,
+    pub can_reply: bool,
+    pub reply_form_action: String,
+    pub csrf_token: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct HomeCategoryCard {
     pub name: String,
@@ -91,6 +106,7 @@ pub struct CategoryHeader {
 
 #[derive(Debug, Clone)]
 pub struct CategoryThreadRow {
+    pub id: i64,
     pub title: String,
     pub slug: String,
     pub author_username: String,
@@ -104,6 +120,29 @@ pub struct CategoryThreadRow {
 pub struct NewThreadFormValues {
     pub title: String,
     pub body: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ThreadHeader {
+    pub id: i64,
+    pub title: String,
+    pub slug: String,
+    pub category_name: String,
+    pub category_slug: String,
+    pub author_username: String,
+    pub created_at: DateTime<Utc>,
+    pub last_activity_at: DateTime<Utc>,
+    pub is_pinned: bool,
+    pub is_locked: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ThreadPostRow {
+    pub id: i64,
+    pub author_username: String,
+    pub body: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Template)]
