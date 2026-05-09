@@ -1,19 +1,24 @@
-use std::{error::Error, net::SocketAddr};
+use std::net::SocketAddr;
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
 use serde::Serialize;
 use tokio::net::TcpListener;
-use tower_http::{services::ServeDir, trace::TraceLayer};
-use tracing::{error, info};
+use tower_http::{
+    services::ServeDir,
+    trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnRequest, DefaultOnResponse, TraceLayer},
+};
+use tracing::{error, info, Level};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod config;
 mod db;
+mod error;
 mod templates;
 
 use config::Config;
 use db::Db;
-use templates::{HomeTemplate, HtmlTemplate};
+use error::AppError;
+use templates::{render, HomeTemplate};
 
 #[derive(Clone)]
 struct AppState {
@@ -29,7 +34,7 @@ struct HealthResponse {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), AppError> {
     init_tracing();
 
     let config = Config::from_env()?;
@@ -43,7 +48,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .route("/", get(root))
         .route("/health", get(health))
         .nest_service("/static", ServeDir::new("static"))
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO))
+                .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
+        )
         .with_state(state);
 
     let listener = TcpListener::bind(bind_addr).await?;
@@ -62,8 +73,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn root() -> impl IntoResponse {
-    HtmlTemplate(HomeTemplate)
+async fn root() -> Result<impl IntoResponse, AppError> {
+    render(HomeTemplate)
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
